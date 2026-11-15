@@ -35,6 +35,12 @@ The disc image is the raw `.bin` (`Tekken 2 (USA) (v1.1) (Track 1).bin`); the CD
 It depends on [ok_converter_common](https://github.com/openkumite/ok_converter_common); its tests and examples on
 [ok_tekken3_converter](https://github.com/openkumite/ok_tekken3_converter) (the fingerprint). `sh check.sh` runs the checks.
 
+## Releases
+
+A tag `vX.Y.Z` (Cargo.toml's version; only organisation admins push `v*` tags) publishes a release: `t2_convert` for
+Linux (amd64, arm64), Windows and macOS (universal), with SHA256SUMS (`.github/workflows/release.yml`). `main` takes
+pull requests only, its CI passing; Dependabot opens one grouped pull request a week.
+
 ## License
 
 MIT ([LICENSE](LICENSE)). Third-party work: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
