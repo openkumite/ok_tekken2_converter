@@ -32,8 +32,8 @@ The disc image is the raw `.bin` (`Tekken 2 (USA) (v1.1) (Track 1).bin`); the CD
 | `docs/converter.md` | the modules, the developer tool, the viewer, how to check a change |
 | `docs/reference/` | the reference notes: the original game and its formats |
 
-It depends on [ok_converter_common](../ok_converter_common); its tests and examples on
-[ok_tekken3_converter](../ok_tekken3_converter) (the fingerprint). `sh check.sh` runs the checks.
+It depends on [ok_converter_common](https://github.com/openkumite/ok_converter_common); its tests and examples on
+[ok_tekken3_converter](https://github.com/openkumite/ok_tekken3_converter) (the fingerprint). `sh check.sh` runs the checks.
 
 ## License
 

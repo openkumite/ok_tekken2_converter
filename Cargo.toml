@@ -15,7 +15,7 @@ name = "t2_convert"
 path = "src/main.rs"
 
 [dependencies]
-ok_converter_common = { path = "../ok_converter_common" }
+ok_converter_common = { git = "https://github.com/openkumite/ok_converter_common", branch = "main" }
 anyhow = "1"
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 png = "0.18"
@@ -25,7 +25,7 @@ libm = "=0.2.16"
 sha1 = "0.10"
 
 [dev-dependencies]
-ok_tekken3_converter = { path = "../ok_tekken3_converter" }
+ok_tekken3_converter = { git = "https://github.com/openkumite/ok_tekken3_converter", branch = "main" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
 

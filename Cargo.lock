@@ -420,6 +420,7 @@ dependencies = [
 [[package]]
 name = "ok_converter_common"
 version = "0.1.0"
+source = "git+https://github.com/openkumite/ok_converter_common?branch=main#f9a47611d6c5c0e728547af1d5ed0358a51df482"
 dependencies = [
  "anyhow",
  "flacenc",
@@ -447,6 +448,7 @@ dependencies = [
 [[package]]
 name = "ok_tekken3_converter"
 version = "0.1.0"
+source = "git+https://github.com/openkumite/ok_tekken3_converter?branch=main#33069b1f61bc42b2e0841f0cf679f8497f015bfd"
 dependencies = [
  "anyhow",
  "chrono",
