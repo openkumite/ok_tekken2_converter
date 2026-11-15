@@ -1,0 +1,25 @@
+/target
+
+# Disc images and dumps (copyrighted game data)
+*.bin
+*.cue
+*.iso
+*.img
+*.chd
+*.ecm
+*.pbp
+SLUS_*
+*.BNS
+*.XAS
+
+# Converted game data
+/assets
+/assets_t2
+
+# The viewer's links to the converted files (docs/converter.md, Viewer)
+viewer/models
+viewer/media
+viewer/stages
+
+.DS_Store
+.claude/worktrees/

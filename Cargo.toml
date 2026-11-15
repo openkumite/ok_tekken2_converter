@@ -1,0 +1,40 @@
+[package]
+name = "ok_tekken2_converter"
+version = "0.1.0"
+edition = "2024"
+description = "Converts your own Tekken 2 disc image (PlayStation, USA v1.1, SLUS-00213) into a pack of fighters OpenKumite plays beside Tekken 3's"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+# the developer tool: the converter's parts one at a time (docs/converter.md)
+name = "t2_convert"
+path = "src/main.rs"
+
+[dependencies]
+ok_converter_common = { path = "../ok_converter_common" }
+anyhow = "1"
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+png = "0.18"
+image = { version = "0.25", default-features = false, features = ["png"] }
+# pinned: an update could change the output bits (the fingerprint)
+libm = "=0.2.16"
+sha1 = "0.10"
+
+[dev-dependencies]
+ok_tekken3_converter = { path = "../ok_tekken3_converter" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
+[profile.release]
+debug = 1
+
+[profile.dev]
+opt-level = 2
