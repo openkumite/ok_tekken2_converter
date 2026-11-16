@@ -22,7 +22,7 @@ png = "0.18"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # pinned: an update could change the output bits (the fingerprint)
 libm = "=0.2.16"
-sha1 = "0.10"
+sha1 = "0.11"
 
 [dev-dependencies]
 ok_tekken3_converter = { git = "https://github.com/openkumite/ok_tekken3_converter", branch = "main" }
