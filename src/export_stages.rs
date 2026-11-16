@@ -35,7 +35,7 @@ use crate::np::{self, mv3};
 use crate::ps1::{C, Glb, Rgba, SCALE, f64_value, floats, i16_, i32_, py_slice, u16_, u32_, walk_tims};
 use crate::{pil, pyjson};
 use anyhow::{Context, Result, bail};
-use ok_converter_common::io::{Ctx, DiscFile, StdDisc, StdFs, Vfs, join};
+use ok_converter_common::io::{Ctx, DiscFile, StdFs, Vfs, join};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::PI;
@@ -496,7 +496,7 @@ pub fn main(args: &[String]) -> Result<()> {
         None => None,
     };
     let ctx = Ctx { out: &StdFs(out.into()), log: &ok_converter_common::io::print_line, jobs: 1 };
-    run(&ctx, &StdDisc(src.into()), "", only.as_ref())
+    run(&ctx, &crate::ps1::track1(src)?, "", only.as_ref())
 }
 
 /// The arenas (`only` those) as glTF in `dir` of the output, with index.json.

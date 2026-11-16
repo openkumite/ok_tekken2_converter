@@ -2,7 +2,7 @@
 //! and `t2_convert install PACK T3_PACK EXTRAS` (what OpenKumite runs: pack.rs), or `t2_convert SCRIPT ARGS...` for
 //! one of the scripts: export_characters, export_stages, export_media, transplant.
 
-use ok_converter_common::io::{Ctx, Layered, StdDisc, StdFs, Sub, print_line};
+use ok_converter_common::io::{Ctx, Layered, StdFs, Sub, print_line};
 use ok_tekken2_converter::*;
 
 fn main() {
@@ -26,8 +26,9 @@ fn main() {
 /// `pack BIN PACK`: the Tekken 2 pack of the disc image BIN (its CD-audio tracks beside it).
 fn pack_main(args: &[String]) -> anyhow::Result<()> {
     let [src, out] = args else { anyhow::bail!("usage: t2_convert pack BIN PACK") };
+    let (track1, cdda) = ok_tekken2_converter::ps1::image(src)?;
     let ctx = Ctx { out: &StdFs(out.into()), log: &print_line, jobs: 1 };
-    pack::convert(&ctx, &StdDisc(src.into()), &export_media::cdda_beside(src))?;
+    pack::convert(&ctx, &track1, &cdda)?;
     Ok(())
 }
 

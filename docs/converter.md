@@ -13,7 +13,7 @@ and Pillow's arithmetic). Nothing here imports the Tekken 3 converter: the insta
 ## What OpenKumite runs (`pack.rs`)
 
 ```sh
-t2_convert pack "Tekken 2 (USA) (v1.1) (Track 1).bin" PACK      # the disc alone -> the Tekken 2 pack (~0.9 GB)
+t2_convert pack "Tekken 2 (USA) (v1.1).cue" PACK                # the disc alone -> the Tekken 2 pack (~0.9 GB); any image format
 t2_convert install PACK T3_PACK EXTRAS                          # the fighters, into the extras (~0.8 GB)
 cargo run --release --example view_fingerprint -- T3_PACK EXTRAS PACK/assets
 ```

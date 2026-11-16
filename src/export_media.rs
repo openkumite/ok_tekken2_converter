@@ -23,7 +23,7 @@ use crate::ps1::{
 };
 use crate::{pil, pyjson};
 use anyhow::{Context, Result, bail};
-use ok_converter_common::io::{Ctx, DiscFile, StdDisc, StdFs, Vfs, join};
+use ok_converter_common::io::{Ctx, DiscFile, StdFs, Vfs, join};
 use ok_converter_common::psx::{Pcm, decode_xa, flac, str_to_avi};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -145,17 +145,19 @@ pub fn export_stream(
     Ok(secs.len())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_music(
     ctx: &Ctx,
     iso: &mut Iso,
     xas_lba: u32,
+    xa: bool,
     cdda: &[Option<Box<dyn DiscFile>>; 2],
     outdir: &str,
     disc: &Disc,
     names: &HashMap<(bool, i64), Vec<String>>,
 ) -> Result<Vec<Value>> {
     let mut out = Vec::new();
-    for (k, (ch, a, b)) in xa_streams(disc)?.into_iter().enumerate() {
+    for (k, (ch, a, b)) in xa_streams(disc)?.into_iter().enumerate().filter(|_| xa) {
         let n = export_stream(iso, xas_lba, (ch, a, b), ctx.out, &join(outdir, &format!("{k:02}.flac")))?;
         let use_ = names.get(&(false, k as i64)).map_or("not played by the BGM table".to_string(), |v| v.join(", "));
         out.push(json!({"name": format!("{use_} · XA {:02} (channel {ch}, sectors {a}-{b})", k + 1), "file": format!("{k:02}.flac"),
@@ -371,15 +373,6 @@ fn nlz_frames(rec: &[u8]) -> Result<Vec<Rgba>> {
         .collect()
 }
 
-/// The CD-audio tracks 2 and 3 beside track 1, when they are there.
-pub fn cdda_beside(src: &str) -> [Option<Box<dyn DiscFile>>; 2] {
-    [2, 3].map(|n| {
-        let track = src.replace("Track 1", &format!("Track {n}"));
-        (track != src && std::path::Path::new(&track).exists())
-            .then(|| Box::new(StdDisc(track.into())) as Box<dyn DiscFile>)
-    })
-}
-
 pub fn main(args: &[String]) -> Result<()> {
     let [src, out, rest @ ..] = args else {
         bail!("usage: t2_convert export_media BIN OUTDIR [sfx,music,video,pictures]")
@@ -388,8 +381,9 @@ pub fn main(args: &[String]) -> Result<()> {
         Some(s) => s.split(',').collect(),
         None => vec!["sfx", "music", "video", "pictures"],
     };
+    let (track1, cdda) = crate::ps1::image(src)?;
     let ctx = Ctx { out: &StdFs(out.into()), log: &ok_converter_common::io::print_line, jobs: 1 };
-    run(&ctx, &StdDisc(src.into()), &cdda_beside(src), "", &what)
+    run(&ctx, &track1, &cdda, "", &what)
 }
 
 /// Sounds, music (with the CD-audio tracks 2 and 3), movies and pictures (`what` of those) in `dir` of the output,
@@ -415,14 +409,27 @@ pub fn run(
         ctx.log(&format!("sfx banks {} samples {n}", banks.len()));
         idx.insert("sfx".into(), json!(banks));
     }
+    // (an image of the data alone, an ISO, has no XA sectors: no streamed music, no movies)
+    let whole = src.whole_sectors();
+    if !whole {
+        ctx.log(&format!(
+            "{}: an image of the data alone (no Mode 2 Form 2 sectors): no XA music, no movies",
+            src.name()
+        ));
+    }
     if what.contains(&"music") {
-        let music = export_music(ctx, &mut iso, xas_lba, cdda, &join(dir, "music"), &disc, &music_names(&disc)?)?;
+        let music =
+            export_music(ctx, &mut iso, xas_lba, whole, cdda, &join(dir, "music"), &disc, &music_names(&disc)?)?;
         idx.insert("music".into(), json!(music));
     }
     if what.contains(&"video") {
         idx.insert(
             "video".into(),
-            json!(export_video(ctx, &mut iso, xas_lba, nsec, &join(dir, "video"), &movie_names(&disc)?)?),
+            json!(if whole {
+                export_video(ctx, &mut iso, xas_lba, nsec, &join(dir, "video"), &movie_names(&disc)?)?
+            } else {
+                Vec::new()
+            }),
         );
     }
     if what.contains(&"pictures") {
