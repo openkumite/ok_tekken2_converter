@@ -5,7 +5,7 @@
 //! A pack (any `Vfs`: a folder, or the browser's pack file):
 //!
 //! ```text
-//! manifest.json        {"pack": "t2", "format": FORMAT, "source": {"file", "sha1_16mb"}}
+//! manifest.json        {"pack": "t2", "format": FORMAT, "source": {"file", "sha1_16mb", "missing"?}}
 //! disc/SLUS_002.13     the disc's EXE: its tables (moves, motions, BGMs, sounds); the install reads them
 //! disc/TEKKEN2.BNS     the disc's archive: models, motions, pictures, arenas, sounds
 //! assets/              files the game reads as they are (a layer of its view, under the extras): the fighters'
@@ -52,6 +52,16 @@ pub fn convert(ctx: &Ctx, src: &dyn DiscFile, cdda: &[Option<Box<dyn DiscFile>>;
     let disc = Disc::open(src)?;
     let (music, movies) = transplant::disc_files(&disc)?;
     let assets = Sub { inner: out, prefix: ASSETS.into() };
+    // (an image of the data alone, an ISO, has no XA sectors: no music, no endings; the install names them all the same)
+    let media = src.whole_sectors();
+    let music = if media { music } else { Vec::new() };
+    let movies = if media { movies } else { Vec::new() };
+    if !media {
+        ctx.log(&format!(
+            "[t2] {}: an image of the data alone (no Mode 2 Form 2 sectors): no music, no endings",
+            src.name()
+        ));
+    }
     ctx.log("[t2] music");
     let xas_lba = iso.find("TEKKEN2/TEKKEN2.XAS")?.0;
     let streams = em::xa_streams(&disc)?;
@@ -60,7 +70,9 @@ pub fn convert(ctx: &Ctx, src: &dyn DiscFile, cdda: &[Option<Box<dyn DiscFile>>;
         em::export_stream(&mut iso, xas_lba, stream, &assets, &path)?;
     }
     ctx.log("[t2] endings");
-    em::run(ctx, src, cdda, MEDIA, &["video"])?;
+    if media {
+        em::run(ctx, src, cdda, MEDIA, &["video"])?;
+    }
     let videos = Sub { inner: out, prefix: format!("{MEDIA}/video") };
     for (path, movie) in movies {
         if videos.exists(&movie) {
@@ -90,18 +102,24 @@ pub fn manifest(pack: &dyn Vfs) -> Result<Value> {
 /// `assets/` ([`ASSETS`]) over the Tekken 3 pack (an `ok_converter_common::io::Layered`); the fingerprint is the
 /// caller's.
 pub fn install(ctx: &Ctx, pack: &dyn Vfs) -> Result<()> {
-    manifest(pack)?;
+    let m = manifest(pack)?;
+    let media = !m["source"]["missing"].as_array().is_some_and(|v| v.iter().any(|x| x == "movies"));
     let read = |to: &str| pack.read(to).with_context(|| format!("the Tekken 2 pack has no {to}"));
     let disc = Disc::from_files(read(DISC_FILES[0].0)?, read(DISC_FILES[1].0)?)?;
     // (the endings are in the view already: none are copied)
     let videos = Sub { inner: pack, prefix: ASSETS.into() };
-    transplant::run_from(ctx, &disc, None, &videos, None)
+    transplant::run_from(ctx, &disc, None, media, &videos, None)
 }
 
-/// The image's name and first 16 MB's SHA-1 (tells disc images apart).
+/// The image's name and first 16 MB's SHA-1 (tells disc images apart), and what it does not hold ("missing":
+/// "movies" and "XA music" from an image of the data alone; the game plays without them).
 pub fn source(disc: &dyn DiscFile) -> Result<Value> {
     let mut head = Vec::new();
     disc.open()?.take(16 << 20).read_to_end(&mut head).with_context(|| format!("cannot read {}", disc.name()))?;
     let sha: String = sha1::Sha1::digest(&head).iter().map(|b| format!("{b:02x}")).collect();
-    Ok(json!({"file": disc.name(), "sha1_16mb": sha}))
+    let mut v = json!({"file": disc.name(), "sha1_16mb": sha});
+    if !disc.whole_sectors() {
+        v["missing"] = json!(["movies", "XA music"]);
+    }
+    Ok(v)
 }

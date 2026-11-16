@@ -10,7 +10,7 @@
 
 use crate::{export_characters, export_media, export_stages};
 use anyhow::{Result, bail};
-use ok_converter_common::io::{Ctx, DiscFile, StdDisc, StdFs};
+use ok_converter_common::io::{Ctx, DiscFile, StdFs};
 use std::path::PathBuf;
 
 pub fn main(args: &[String]) -> Result<()> {
@@ -18,8 +18,9 @@ pub fn main(args: &[String]) -> Result<()> {
     let Some(src) = args.first() else { bail!("usage: t2_convert BIN [OUTDIR] [characters,stages,media] [--jobs N]") };
     let out = args.get(1).map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets_t2"), PathBuf::from);
     let what: Vec<&str> = args.get(2).map_or(vec!["characters", "stages", "media"], |s| s.split(',').collect());
+    let (track1, cdda) = crate::ps1::image(src)?;
     let ctx = Ctx { out: &StdFs(out), log: &ok_converter_common::io::print_line, jobs };
-    run(&ctx, &StdDisc(src.into()), &export_media::cdda_beside(src), &what)
+    run(&ctx, &track1, &cdda, &what)
 }
 
 /// The parts (`what` of characters, stages, media) in their folders of the output.

@@ -29,7 +29,7 @@ use crate::ps1::{
 use crate::transplant_moves as tm;
 use crate::{pil, pyjson};
 use anyhow::{Context, Result, bail};
-use ok_converter_common::io::{Ctx, DiscFile, StdDisc, StdFs, Vfs, join};
+use ok_converter_common::io::{Ctx, DiscFile, StdFs, Vfs, join};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -1393,6 +1393,7 @@ fn transplant_script(
 fn transplant_music(
     disc: &Disc,
     src: Option<&dyn DiscFile>,
+    media: bool,
     assets: &dyn Vfs,
     block: usize,
     name: &str,
@@ -1412,7 +1413,8 @@ fn transplant_music(
         }
         let file = format!("t2_{xa:02}.flac");
         let path = join("audio/music", &file);
-        if !assets.exists(&path) {
+        // (an image of the data alone has no XA music: the column names the file all the same, the game plays without)
+        if !assets.exists(&path) && media {
             let stream = *streams.get(xa as usize).context("no such XA stream")?;
             let src = src.with_context(|| format!("{path} is not in the Tekken 2 pack"))?;
             let (iso, xas_lba) = match &mut iso {
@@ -1445,6 +1447,10 @@ fn transplant_music(
 const ENDING_BASE: i64 = 100; // the port's movie numbers of Tekken 2's movies: 100 + its movie number (video/1NN.avi)
 
 /// (width, height) of an AVI from its main header.
+/// The size of Tekken 2's ending movies (all 25 are 320 x 240): theater.json's entry when the image held no movies
+/// (else each one's .avi tells it).
+const ENDING_SIZE: (u32, u32) = (320, 240);
+
 fn avi_size(d: &[u8]) -> Result<(u32, u32)> {
     let d = &d[..d.len().min(256)];
     let i = d.windows(4).position(|w| w == b"avih").map_or(-1, |i| i as i64);
@@ -1550,7 +1556,7 @@ fn theater_entry(
 fn transplant_ending(
     disc: &Disc,
     assets: &dyn Vfs,
-    videos: &dyn Vfs,
+    videos: Option<&dyn Vfs>,
     block: usize,
     cid: i64,
     costume: usize,
@@ -1558,8 +1564,11 @@ fn transplant_ending(
 ) -> Result<usize> {
     let m = em::ending_movie(disc, block)? as i64;
     let placed = format!("video/{:02}.avi", ENDING_BASE + m);
-    // (a pack's are in place already)
-    if !assets.exists(&placed) {
+    // (a pack's are in place already; an image of the data alone has no movies, `videos` None: the entry names it all
+    // the same)
+    if !assets.exists(&placed)
+        && let Some(videos) = videos
+    {
         let avi = format!("{m:02}.avi");
         if !videos.exists(&avi) {
             bail!("the Tekken 2 movie {avi} is missing: run export_media (video) first");
@@ -1571,7 +1580,7 @@ fn transplant_ending(
             }
         }
     }
-    let (w, h) = avi_size(&assets.read(&placed)?)?;
+    let (w, h) = if assets.exists(&placed) { avi_size(&assets.read(&placed)?)? } else { ENDING_SIZE };
     let tp = "gamedata/theater.json";
     let mut theater = load_json(assets, tp)?;
     let source = format!("Tekken 2 ending movie {m} (record 20, 0x801D00E4)");
@@ -1658,6 +1667,7 @@ fn purge(ctx: &Ctx, fighters: &[Fighter]) -> Result<()> {
 fn transplant_fighter(
     disc: &Disc,
     src: Option<&dyn DiscFile>,
+    media: bool,
     assets: &dyn Vfs,
     videos: &dyn Vfs,
     f: &Fighter,
@@ -1673,8 +1683,8 @@ fn transplant_fighter(
     t2::convert(disc, block, assets, &src_glb)?;
     let (voice_index, hit_index, system_start) =
         transplant_sound(disc, assets, block, record, voice_row(cid, costume), t2id, tmp)?;
-    let bgm = transplant_music(disc, src, assets, f.blocks[0], name)?;
-    let ending = transplant_ending(disc, assets, videos, block, cid, costume, own_name)?;
+    let bgm = transplant_music(disc, src, media, assets, f.blocks[0], name)?;
+    let ending = transplant_ending(disc, assets, media.then_some(videos), block, cid, costume, own_name)?;
     let t2set = tm::T2Set::new(disc, block, t2id)?;
     let (stance, moves) = tm::graph(&t2set)?;
     let trig = t2::Trig::new(disc)?;
@@ -1862,7 +1872,7 @@ pub fn main(args: &[String]) -> Result<()> {
     let abs = std::path::absolute(assets_arg)?;
     let videos = StdFs(abs.parent().unwrap_or(std::path::Path::new("/")).join("assets_t2/media/video"));
     let ctx = Ctx { out: &StdFs(assets_arg.into()), log: &ok_converter_common::io::print_line, jobs: 1 };
-    run(&ctx, &StdDisc(src.into()), &videos, only.as_ref())?;
+    run(&ctx, &crate::ps1::track1(src)?, &videos, only.as_ref())?;
     // (the files changed: online play needs the fingerprint again; Tekken 2's tools never run Tekken 3's)
     println!("now: target/release/t3_convert --fingerprint {assets_arg}");
     Ok(())
@@ -1929,15 +1939,17 @@ fn register(assets: &dyn Vfs) -> Result<()> {
 /// Every fighter (or those costume blocks) and their home arenas into the Tekken 3 assets (`ctx.out`), from the disc
 /// image `src`; the endings' movies from `videos` (export_media's video folder).
 pub fn run(ctx: &Ctx, src: &dyn DiscFile, videos: &dyn Vfs, only: Option<&BTreeSet<usize>>) -> Result<()> {
-    run_from(ctx, &Disc::open(src)?, Some(src), videos, only)
+    run_from(ctx, &Disc::open(src)?, Some(src), src.whole_sectors(), videos, only)
 }
 
 /// [`run`] from the disc's tables (`disc`): a pack's install, without the disc image (`src` None), its music and
-/// endings ([`disc_files`]) in the assets already.
+/// endings ([`disc_files`]) in the assets already. `media`: whether the image held the music and movies (an image of
+/// the data alone, an ISO, did not: the fighters' music and endings are named, their files not there).
 pub fn run_from(
     ctx: &Ctx,
     disc: &Disc,
     src: Option<&dyn DiscFile>,
+    media: bool,
     videos: &dyn Vfs,
     only: Option<&BTreeSet<usize>>,
 ) -> Result<()> {
@@ -1954,7 +1966,7 @@ pub fn run_from(
         for f in &fighters {
             for &b in &f.blocks {
                 if only.is_none_or(|o| o.contains(&b)) {
-                    let n = transplant_fighter(disc, src, assets, videos, f, b, TMP)
+                    let n = transplant_fighter(disc, src, media, assets, videos, f, b, TMP)
                         .with_context(|| format!("{} (block {b})", f.name))?;
                     ctx.log(&format!("model_{:03}.glb {} (block {b}): {n} moves from Tekken 2", 900 + b, f.name));
                 }

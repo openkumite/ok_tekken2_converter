@@ -3,9 +3,9 @@
 
 use crate::pyjson;
 use anyhow::{Context, Result, bail};
-use ok_converter_common::io::{DiscFile, ReadSeek, Vfs, join};
+use ok_converter_common::disc::Track;
+use ok_converter_common::io::{DiscFile, Vfs, join};
 use serde_json::{Map, Value, json};
-use std::io::{Read, SeekFrom};
 
 pub const SECTOR: u64 = 2352; // raw CD sector
 pub const HDR: u64 = 24; // Mode 2 header + subheader
@@ -50,95 +50,48 @@ pub fn py_round(x: f64, nd: usize) -> f64 {
 }
 
 // ---- the disc --------------------------------------------------------------------------------------------------------
-pub struct Iso {
-    f: Box<dyn ReadSeek>,
-    /// Every file, in the directory walk's order: path, first sector, size.
-    pub files: Vec<(String, u32, u32)>,
+/// The data track's files (ok_converter_common's ISO 9660 reader, with Tekken 2's hint when a file is not there).
+pub struct Iso(ok_converter_common::disc::Iso);
+
+impl std::ops::Deref for Iso {
+    type Target = ok_converter_common::disc::Iso;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Iso {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl Iso {
     pub fn open(disc: &dyn DiscFile) -> Result<Iso> {
-        let f = disc.open().with_context(|| format!("cannot open the disc image {}", disc.name()))?;
-        let mut iso = Iso { f, files: Vec::new() };
-        let pvd = iso.sector(16)?;
-        if pvd.get(1..6) != Some(b"CD001") {
-            bail!("{} is not a raw (2352-byte sector) CD image with ISO 9660 data", disc.name());
-        }
-        let root = pvd[156..190].to_vec();
-        iso.walk(u32_(&root, 2)?, u32_(&root, 10)?, String::new(), 0)?;
-        Ok(iso)
-    }
-
-    /// One sector's 2048 bytes of user data (short at the end of the image).
-    pub fn sector(&mut self, n: u64) -> Result<Vec<u8>> {
-        self.at(n * SECTOR + HDR, 2048)
-    }
-
-    /// `n` bytes at a byte offset of the image (short at its end).
-    pub fn at(&mut self, offset: u64, n: u64) -> Result<Vec<u8>> {
-        self.f.seek(SeekFrom::Start(offset))?;
-        let mut buf = Vec::with_capacity(n as usize);
-        (&mut self.f).take(n).read_to_end(&mut buf)?;
-        Ok(buf)
-    }
-
-    fn walk(&mut self, lba: u32, size: u32, path: String, depth: u32) -> Result<()> {
-        if depth > 16 {
-            bail!("the disc's directories nest too deep");
-        }
-        let mut data = Vec::new();
-        for i in 0..size.div_ceil(2048) {
-            data.extend(self.sector(lba as u64 + i as u64)?);
-        }
-        let mut o = 0;
-        while o < data.len() {
-            let l = data[o] as usize;
-            if l == 0 {
-                o = (o / 2048 + 1) * 2048;
-                continue;
-            }
-            let r = data.get(o..o + l).context("a directory record runs past its directory")?;
-            o += l;
-            if r.len() < 34 {
-                bail!("a directory record is too short");
-            }
-            let (ext, sz) = (u32_(r, 2)?, u32_(r, 10)?);
-            let name = r.get(33..33 + r[32] as usize).context("a directory record's name runs past it")?;
-            if name == b"\0" || name == b"\x01" {
-                continue;
-            }
-            let n = String::from_utf8_lossy(name);
-            let n = n.split(';').next().unwrap_or("").to_string();
-            if r[25] & 2 != 0 {
-                self.walk(ext, sz, format!("{path}{n}/"), depth + 1)?;
-            } else {
-                self.files.push((format!("{path}{n}"), ext, sz));
-            }
-        }
-        Ok(())
+        Ok(Iso(ok_converter_common::disc::Iso::open(disc)?))
     }
 
     pub fn find(&self, name: &str) -> Result<(u32, u32)> {
-        self.files
-            .iter()
-            .find(|f| f.0 == name)
-            .map(|f| (f.1, f.2))
-            .with_context(|| format!("{name} is not on the disc (is it Tekken 2 USA v1.1, SLUS-00213?)"))
-    }
-
-    pub fn read_file(&mut self, lba: u32, size: u32) -> Result<Vec<u8>> {
-        let mut buf = Vec::with_capacity(size as usize + 2048);
-        for i in 0..size.div_ceil(2048) {
-            buf.extend(self.sector(lba as u64 + i as u64)?);
-        }
-        buf.truncate(size as usize);
-        Ok(buf)
+        self.0.find(name).with_context(|| format!("{name} is not on the disc (is it Tekken 2 USA v1.1, SLUS-00213?)"))
     }
 
     pub fn read(&mut self, name: &str) -> Result<Vec<u8>> {
         let (lba, size) = self.find(name)?;
         self.read_file(lba, size)
     }
+}
+
+/// The disc image at `path` (any format ok_converter_common reads: .cue/.bin, .iso, .chd, .ccd, .mds, .ecm, .pbp, with
+/// the files beside it): track 1 and the CD-audio tracks 2 and 3 when the image keeps them.
+pub fn image(path: impl AsRef<std::path::Path>) -> Result<(Track, [Option<Box<dyn DiscFile>>; 2])> {
+    let disc = ok_converter_common::disc::Disc::open_path(path.as_ref())?;
+    let cdda = [2, 3].map(|n| disc.audio(n).map(|t| Box::new(t.clone()) as Box<dyn DiscFile>));
+    Ok((disc.data()?.clone(), cdda))
+}
+
+/// The image's track 1.
+pub fn track1(path: impl AsRef<std::path::Path>) -> Result<Track> {
+    Ok(image(path)?.0)
 }
 
 // ---- TIM pictures ----------------------------------------------------------------------------------------------------

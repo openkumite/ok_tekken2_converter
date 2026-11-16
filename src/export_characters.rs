@@ -31,7 +31,7 @@ use crate::ps1::{
 };
 use crate::{np, pil, pyjson};
 use anyhow::{Context, Result, bail};
-use ok_converter_common::io::{Ctx, DiscFile, StdDisc, StdFs, Vfs, join};
+use ok_converter_common::io::{Ctx, DiscFile, StdFs, Vfs, join};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
@@ -926,7 +926,7 @@ pub fn main(args: &[String]) -> Result<()> {
         None => None,
     };
     let ctx = Ctx { out: &StdFs(out.into()), log: &ok_converter_common::io::print_line, jobs };
-    run(&ctx, &StdDisc(src.into()), "", only.as_deref())
+    run(&ctx, &crate::ps1::track1(src)?, "", only.as_deref())
 }
 
 /// The character blocks (`only` those) as glTF in `dir` of the output, with index.json and characters.json.

@@ -21,7 +21,11 @@ Tekken 2 disc image beside the Tekken 3 one. This repository is the library and 
   over the pack's `assets/` over the Tekken 3 pack (ok_converter_common's `Layered`). Each fighter plays a Tekken 3
   donor's system, its motions copied onto the fighter by joint name, so the install needs the Tekken 3 pack.
 
-The disc image is the raw `.bin` (`Tekken 2 (USA) (v1.1) (Track 1).bin`); the CD-audio tracks are read beside it.
+The disc image is in any format ok_converter_common's `disc` module reads: a `.cue` with its `.bin` files (or the
+`.bin` alone, `Tekken 2 (USA) (v1.1) (Track 1).bin`: the `.cue` or the split image's other tracks beside it are found),
+`.chd`, `.ccd`/`.img`, `.mds`/`.mdf`, `.ecm`, a popstation `EBOOT.PBP`, or an `.iso`. An `.iso` keeps only each
+sector's 2048 bytes of data: a pack from it has no music and no endings (the manifest's `source.missing` says so); the
+install names them all the same, so the game's data, and the fingerprint, is a full image's.
 
 ## Repository
 
