@@ -1,6 +1,6 @@
 [package]
 name = "ok_tekken2_converter"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Converts your own Tekken 2 disc image (PlayStation, USA v1.1, SLUS-00213) into a pack of fighters OpenKumite plays beside Tekken 3's"
 license = "MIT"

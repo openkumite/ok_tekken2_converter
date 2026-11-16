@@ -23,7 +23,8 @@ Tekken 2 disc image beside the Tekken 3 one. This repository is the library and 
 
 The disc image is in any format ok_converter_common's `disc` module reads: a `.cue` with its `.bin` files (or the
 `.bin` alone, `Tekken 2 (USA) (v1.1) (Track 1).bin`: the `.cue` or the split image's other tracks beside it are found),
-`.chd`, `.ccd`/`.img`, `.mds`/`.mdf`, `.ecm`, a popstation `EBOOT.PBP`, or an `.iso`. An `.iso` keeps only each
+`.chd`, `.ccd`/`.img`, `.mds`/`.mdf`, `.ecm`, a popstation `EBOOT.PBP`, or an `.iso`; or any of them in an archive
+(`.zip`, `.7z`, `.tar`, `.gz`, `.xz`, `.zst`: unpacked into a temporary file first). An `.iso` keeps only each
 sector's 2048 bytes of data: a pack from it has no music and no endings (the manifest's `source.missing` says so); the
 install names them all the same, so the game's data, and the fingerprint, is a full image's.
 

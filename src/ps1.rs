@@ -82,7 +82,7 @@ impl Iso {
 }
 
 /// The disc image at `path` (any format ok_converter_common reads: .cue/.bin, .iso, .chd, .ccd, .mds, .ecm, .pbp, with
-/// the files beside it): track 1 and the CD-audio tracks 2 and 3 when the image keeps them.
+/// the files beside it; or in an archive: .zip, .7z, .tar, .gz, .xz, .zst, unpacked into a temporary file): track 1 and the CD-audio tracks 2 and 3 when the image keeps them.
 pub fn image(path: impl AsRef<std::path::Path>) -> Result<(Track, [Option<Box<dyn DiscFile>>; 2])> {
     let disc = ok_converter_common::disc::Disc::open_path(path.as_ref())?;
     let cdda = [2, 3].map(|n| disc.audio(n).map(|t| Box::new(t.clone()) as Box<dyn DiscFile>));
