@@ -181,12 +181,18 @@ Tekken 2's select face (record 19).
     throws, their Tekken 2 entries without the plain back / down ones, then the donor's movement (walking back
     guards, up sidesteps or jumps, down crouches), so a fighter throws, guards and sidesteps out of a walk.
   - Throws: attempt slot 0x299 (1+3) / 0x29A (2+4) → common 329 / 334 → on cond 0x2C (grabbed) 330 / 335 →
-    cond 0x02 front / 0x03 side (distance 1536) → the character's throw. Its reaction entry (0x8003E5B4, 18 s16:
-    7 parameters, 11 victim slots) names, last, the victim's move in the thrower's slot table. In OpenKumite the
-    donor's attempts are pointed at these throws (front cond 0x02, sides 0x03 / 0x04), the victim's move joins the
-    set with a new `throw_victims` entry (reactions.json, after the original 397 and the entries of the costumes
-    installed before it, in install order: the indices its move set was written with), and the damage comes at the
-    impact property. Throw damage is move +0xE's low byte (the high bits are flags).
+    cond 0x02 front / 0x03 side (distance 1536) → the character's throw; an entry with held directions (0x930
+    back, 0x2490 forward) picks a variant before the plain one. Its reaction entry (0x8003E5B4, 18 s16:
+    7 parameters, 11 victim slots) names, last, the victim's move in the thrower's slot table. The command throws
+    are the same: an attempt of the character's lists (Nina's 1+2, King's d/b+1+2, common 296..307) going on to its
+    connect move on cond 0x2C. In OpenKumite the donor's attempts are pointed at the 1+3 / 2+4 throws (Tekken 3's
+    front cond 2 at 0x02, back and sides 3..5 at 0x03; a cond Tekken 2 lacks keeps the donor's), a transplanted
+    command attempt grabs as the donor's attempt does and links to its own throws, the victim's move joins the set
+    with a new `throw_victims` entry (reactions.json, after the original 397 and the entries of the costumes
+    installed before it, in install order: the indices its move set was written with) under alias 0x1400 + that
+    entry (no other set has it: a victim plays its own set's alias of the number first, 0x8002D75C), and the damage
+    comes at the impact property. Throw damage is move +0xE's low byte (the high bits are flags). Throws entered by
+    motion inputs (cmd 0xFFxx) are not taken yet, as no motion-input command is.
   - Timed properties: move +0x1C indexes the +7 table at header +0x18, 4-byte {u16 frame, u8 arg, u8 op} up to a
     zero word. Op 3 = Tekken 3's op 8 (effect at a bone), op 1 = op 6, op 0 (arg 4) = the impact.
   - Win poses: slots 0x19B..0x19E, picked by a held □ / △ / × / ○ (0x8006752C; pad 0x800D2D0C / 0x2D0E), become
