@@ -176,13 +176,16 @@ Tekken 2's select face (record 19).
     hit level from +6 and the strings and END windows. The strike path is baked from the striking bone (+0x25),
     elbow / knee to wrist / ankle.
   - The reaction, sounds and flags come from the donor's closest attack (same level and limb).
-  - The stance list puts the Tekken 2 commands first, then the donor's movement, throws and the rest without the
-    donor's attacks.
+  - The stance list puts the donor's throws first, then the Tekken 2 commands, then the donor's movement and the
+    rest without the donor's attacks. The Tekken 2 walks the stance takes (f, the dashes) get the same: the donor's
+    throws, their Tekken 2 entries without the plain back / down ones, then the donor's movement (walking back
+    guards, up sidesteps or jumps, down crouches), so a fighter throws, guards and sidesteps out of a walk.
   - Throws: attempt slot 0x299 (1+3) / 0x29A (2+4) → common 329 / 334 → on cond 0x2C (grabbed) 330 / 335 →
     cond 0x02 front / 0x03 side (distance 1536) → the character's throw. Its reaction entry (0x8003E5B4, 18 s16:
     7 parameters, 11 victim slots) names, last, the victim's move in the thrower's slot table. In OpenKumite the
     donor's attempts are pointed at these throws (front cond 0x02, sides 0x03 / 0x04), the victim's move joins the
-    set with a new `throw_victims` entry (reactions.json, after the original 397), and the damage comes at the
+    set with a new `throw_victims` entry (reactions.json, after the original 397 and the entries of the costumes
+    installed before it, in install order: the indices its move set was written with), and the damage comes at the
     impact property. Throw damage is move +0xE's low byte (the high bits are flags).
   - Timed properties: move +0x1C indexes the +7 table at header +0x18, 4-byte {u16 frame, u8 arg, u8 op} up to a
     zero word. Op 3 = Tekken 3's op 8 (effect at a bone), op 1 = op 6, op 0 (arg 4) = the impact.

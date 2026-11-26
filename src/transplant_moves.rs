@@ -684,16 +684,8 @@ pub fn build(
         list(&mut out["moves"])?.push(mv);
         out["aliases"][alias_of[&r] as usize] = json!({"bank": "own", "move": mi});
     }
-    // command lists of the transplanted moves
-    for &r in &moves {
-        let m = int(&out["aliases"][alias_of[&r] as usize]["move"]) as usize;
-        out["moves"][m]["cancel_start"] = json!(cancels.len());
-        cancels.extend(convert_list(r, false)?);
-    }
-    // throws: the donor's 1+3 / 2+4 attempts (their motion and timing), connecting to the Tekken 2 throws
-    add_throws(ctx, t2, donor, &mut out, &mut cancels, own_motions, throw_victims)?;
-    // the stance: the Tekken 2 commands first, then the donor's list without the donor's own attacks (its shared
-    // lists inlined so they can be filtered); throws and everything that is not an attack stay
+    // the donor's stance list without the donor's own attacks (its shared lists inlined so they can be filtered);
+    // throws and everything that is not an attack stay
     let neutral_move = int(&donor["aliases"][NEUTRAL as usize]["move"]) as usize;
     let st = idx(&donor["moves"], neutral_move as i64)?;
     let t2_first: Vec<Value> = convert_list(stance, true)?.into_iter().filter(|e| e["kind"] != "end").collect();
@@ -718,9 +710,47 @@ pub fn build(
         }
     }
     let end = end.context("the donor's stance list has no END")?;
-    out["moves"][neutral_move]["cancel_start"] = json!(cancels.len());
+    let kept: Vec<Value> = kept.into_iter().cloned().collect();
     // throws come first, as in Tekken 2's list (else 1+3 would match the 1 entries)
     let is_throw = |x: &&Value| x["kind"] == "command" && matches!(int(&x["cmd"]) & 0xF, 0x5 | 0xA);
+    // the walks the stance takes from Tekken 2 (f, the dashes) are stood in like the stance: the donor's throws
+    // first, then their Tekken 2 entries without the plain back / down ones, then the donor's movement (walking
+    // back guards, up sidesteps or jumps, down crouches: Tekken 2's walk lists have none of it)
+    let mut walks = Vec::new();
+    for (cmd, _, _, _, dest, ..) in t2.entries(stance)? {
+        if matches!(cmd, 0x410 | 0xFFFE | 0xFFFD)
+            && let Some(to) = t2.slot(dest as i64)?
+            && to != stance
+            && t2.fields(to)?.active.0 == 0
+        {
+            walks.push(to);
+        }
+    }
+    let t2_moves = ["f", "dash", "backdash"];
+    // command lists of the transplanted moves
+    for &r in &moves {
+        let m = int(&out["aliases"][alias_of[&r] as usize]["move"]) as usize;
+        out["moves"][m]["cancel_start"] = json!(cancels.len());
+        let lst = convert_list(r, false)?;
+        if !walks.contains(&r) {
+            cancels.extend(lst);
+            continue;
+        }
+        let back_down = |e: &Value| int(&e["cmd"]) & 0xC00F == 0 && int(&e["cmd"]) & 0x4F << 5 != 0;
+        let (own, end) = lst.split_at(lst.len() - 1);
+        cancels.extend(kept.iter().filter(|x| is_throw(x)).map(|x| (*x).clone()));
+        cancels.extend(own.iter().filter(|e| !back_down(e)).cloned());
+        cancels.extend(
+            kept.iter()
+                .filter(|x| !is_throw(x) && !t2_moves.contains(&x["input"].as_str().unwrap_or("")))
+                .map(|x| (*x).clone()),
+        );
+        cancels.extend(end.iter().cloned());
+    }
+    // throws: the donor's 1+3 / 2+4 attempts (their motion and timing), connecting to the Tekken 2 throws
+    add_throws(ctx, t2, donor, &mut out, &mut cancels, own_motions, throw_victims)?;
+    // the stance: the Tekken 2 commands first, then the donor's list
+    out["moves"][neutral_move]["cancel_start"] = json!(cancels.len());
     cancels.extend(kept.iter().filter(|x| is_throw(x)).map(|x| (*x).clone()));
     cancels.extend(t2_first);
     cancels.extend(kept.iter().filter(|x| !is_throw(x)).map(|x| (*x).clone()));
