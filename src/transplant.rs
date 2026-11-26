@@ -1750,15 +1750,11 @@ fn transplant_fighter(
     let n_tv = tvo.get("entries").map_or(0, |v| arr(v).len());
     let base = int(tvo.entry("original_count").or_insert(json!(n_tv))) as usize;
     let added = tvo.entry("added").or_insert(json!({})).clone();
-    let mut keys: Vec<(i64, String)> =
-        added.as_object().map_or(vec![], |o| o.keys().map(|k| (k.parse().unwrap_or(0), k.clone())).collect());
-    keys.sort();
     let mut tv: Vec<Value> = arr(&reactions["throw_victims"]["entries"]).iter().take(base).cloned().collect();
-    // the original entries, then those of the fighters with lower model records (built first, so indices hold)
-    for (k, ks) in &keys {
-        if *k < record as i64 {
-            tv.extend(arr(&added[ks]).iter().cloned());
-        }
+    // the original entries, then those of the fighters built before this one, in the order they were built (the
+    // costumes are built by character, not by model record): the indices the move sets were written with hold
+    for (_, v) in added.as_object().into_iter().flatten().take_while(|(k, _)| **k != record.to_string()) {
+        tv.extend(arr(v).iter().cloned());
     }
     let start = tv.len();
     let mut script = |sid: u16| transplant_script(disc, assets, t2id, sid, &voice_index, &hit_index);
@@ -1775,11 +1771,9 @@ fn transplant_fighter(
     let tvo = obj(&mut reactions["throw_victims"])?;
     let added = obj(tvo.entry("added").or_insert(json!({})))?;
     added.insert(record.to_string(), json!(tv[start..]));
-    let mut keys: Vec<(i64, String)> = added.keys().map(|k| (k.parse().unwrap_or(0), k.clone())).collect();
-    keys.sort();
     let mut all: Vec<Value> = tv[..base.min(tv.len())].to_vec();
-    for (_, k) in &keys {
-        all.extend(arr(&added[k]).iter().cloned());
+    for v in added.values() {
+        all.extend(arr(v).iter().cloned());
     }
     tvo.insert("entries".into(), json!(all));
     write_json(assets, rp, &reactions, pyjson::COMPACT)?;
