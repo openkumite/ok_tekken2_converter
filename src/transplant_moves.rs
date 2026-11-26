@@ -48,6 +48,7 @@ fn down(slot: i16) -> i64 {
 pub const EXE: u32 = 0x8000F800; // RAM address - file offset
 const ALIAS_BASE: usize = 0x1000; // aliases of the transplanted moves (Tekken 3's table has 4023)
 const NEUTRAL: i64 = 3; // Tekken 3's neutral alias
+const WIN_POSES: [usize; 4] = [0xD67, 0xD68, 0xD69, 0xD6A]; // Tekken 3's win pose aliases
 
 /// Tekken 2 hit mask -> Tekken 3 (level name, level, mask): 0x20 hits standing, 0x10 crouching; the low nibble is the
 /// guard that blocks it (1 crouching, 2 standing). Hits standing only = high (ducked), blocked crouching = low, else
@@ -757,6 +758,26 @@ pub fn build(
     cancels.push(end.clone());
     out["moves"][neutral_move]["anim"] = json!(clip_name(t2, stance, own_motions)?);
     out["moves"][neutral_move]["frames"] = json!(motion_frames(t2, stance)?);
+    // Tekken 2 has no intros: a round starts in the stance (slot 0, the round's first move, is the stance's motion)
+    for a in 0..3 {
+        out["aliases"][a] = out["aliases"][NEUTRAL as usize].clone();
+    }
+    // the win poses: slots 0x19B..0x19E, picked by a held □ △ × ○ (0x8006752C) as Tekken 3's 0xD67..0xD6A
+    for (k, alias) in WIN_POSES.into_iter().enumerate() {
+        let Some(r) = t2.slot(0x19B + k as i64)? else { continue };
+        let Some(clip) = clip_name(t2, r, own_motions)?.filter(|_| out["aliases"][alias]["bank"] == "own") else {
+            continue;
+        };
+        let m = int(&out["aliases"][alias]["move"]) as usize;
+        let sounds = voice_entries(ctx, t2, r, 0)?;
+        let mv = obj(&mut out["moves"][m])?;
+        mv.insert("anim".into(), json!(clip));
+        mv.insert("frames".into(), json!(motion_frames(t2, r)?));
+        mv.insert("sounds".into(), json!(sounds));
+        for k in ["properties", "property_list"] {
+            mv.shift_remove(k);
+        }
+    }
     for (i, c) in cancels.iter_mut().enumerate() {
         obj(c)?.insert("index".into(), json!(i));
     }

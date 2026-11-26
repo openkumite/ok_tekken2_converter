@@ -189,6 +189,9 @@ Tekken 2's select face (record 19).
     impact property. Throw damage is move +0xE's low byte (the high bits are flags).
   - Timed properties: move +0x1C indexes the +7 table at header +0x18, 4-byte {u16 frame, u8 arg, u8 op} up to a
     zero word. Op 3 = Tekken 3's op 8 (effect at a bone), op 1 = op 6, op 0 (arg 4) = the impact.
+  - Win poses: slots 0x19B..0x19E, picked by a held □ / △ / × / ○ (0x8006752C; pad 0x800D2D0C / 0x2D0E), become
+    Tekken 3's 0xD67..0xD6A with their voice scripts. Tekken 2 has no intros (slot 0, a round's first move, is the
+    stance's motion): Tekken 3's intro aliases 0..2 are the stance.
   - Jump attacks (byte +0x13 = 9) are taken with Tekken 3's airborne posture; plain jumps stay the donor's.
   - Conditions (handlers 0x8004E230; a1 the fighter, a2 the opponent): 0x19 back turned (+0x28 > 0x4000) →
     Tekken 3's 0x24; 0x1E opponent attacking close; 0x27 / 0x2A opponent flag 0x40; 0x2C grabbed (+0x8B);
