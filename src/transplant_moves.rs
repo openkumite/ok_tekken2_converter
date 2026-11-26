@@ -47,6 +47,7 @@ fn down(slot: i16) -> i64 {
 }
 pub const EXE: u32 = 0x8000F800; // RAM address - file offset
 const ALIAS_BASE: usize = 0x1000; // aliases of the transplanted moves (Tekken 3's table has 4023)
+const VICTIM_ALIASES: usize = 0x1400; // + a throw victim's throw_victims entry: its alias, no other set's
 const NEUTRAL: i64 = 3; // Tekken 3's neutral alias
 const WIN_POSES: [usize; 4] = [0xD67, 0xD68, 0xD69, 0xD6A]; // Tekken 3's win pose aliases
 
@@ -749,7 +750,7 @@ pub fn build(
         cancels.extend(end.iter().cloned());
     }
     // throws: the donor's 1+3 / 2+4 attempts (their motion and timing), connecting to the Tekken 2 throws
-    add_throws(ctx, t2, donor, &mut out, &mut cancels, own_motions, throw_victims)?;
+    add_throws(ctx, t2, donor, &mut out, &mut cancels, own_motions, throw_victims, &moves)?;
     // the stance: the Tekken 2 commands first, then the donor's list
     out["moves"][neutral_move]["cancel_start"] = json!(cancels.len());
     cancels.extend(kept.iter().filter(|x| is_throw(x)).map(|x| (*x).clone()));
@@ -847,10 +848,16 @@ fn t3_properties(t2: &T2Set, r: Mv, damage: i64) -> Result<Vec<Value>> {
     Ok(out)
 }
 
+/// The first free alias after the transplanted moves', below the victims'.
 fn new_alias(out: &mut Value) -> Result<usize> {
     let a = list(&mut out["aliases"])?;
-    a.push(json!({"bank": "none", "move": null}));
-    Ok(a.len() - 1)
+    let i = (ALIAS_BASE..VICTIM_ALIASES)
+        .find(|&i| a.get(i).is_none_or(|x| x["bank"] == "none"))
+        .context("too many aliases")?;
+    if i == a.len() {
+        a.push(json!({"bank": "none", "move": null}));
+    }
+    Ok(i)
 }
 
 fn add_move(out: &mut Value, mut mv: Value) -> Result<usize> {
@@ -861,11 +868,14 @@ fn add_move(out: &mut Value, mut mv: Value) -> Result<usize> {
     Ok(i)
 }
 
-/// Each Tekken 2 throw (attempt slot -> its connect move -> cond 0x02 front / 0x03 side) as a Tekken 3 throw: the
-/// thrower's move (Tekken 2 motion, properties, damage at the impact; reaction = a new throw_victims entry naming the
-/// victim's move, which goes into this set: victims play the thrower's), linked with transition 0x21; the donor's
-/// attempt (1+3 / 2+4: motion, active frames, distance) re-pointed at them, the donor's other connections (back
-/// throw) kept.
+/// Each Tekken 2 throw (attempt -> on cond 0x2C its connect move -> cond 0x02 front / 0x03 side, a held direction
+/// picking a variant) as a Tekken 3 throw: the thrower's move (Tekken 2 motion, properties, damage at the impact;
+/// reaction = a new throw_victims entry naming the victim's move, which goes into this set: victims play the
+/// thrower's), linked with transition 0x21. The donor's 1+3 / 2+4 attempts (motion, active frames, distance) are
+/// re-pointed at the slot 0x299 / 0x29A throws (Tekken 3's front cond 2 at Tekken 2's 0x02, its back and sides 3..5
+/// at 0x03; a cond Tekken 2 lacks keeps the donor's throw); a command throw's attempt (a transplanted move with a
+/// cond 0x2C entry: Nina's 1+2, King's d/b+1+2...) grabs as the donor's attempt does and links to its own throws.
+#[allow(clippy::too_many_arguments)]
 fn add_throws(
     ctx: &mut Ctx,
     t2: &T2Set,
@@ -874,6 +884,7 @@ fn add_throws(
     cancels: &mut Vec<Value>,
     own_motions: &[usize],
     throw_victims: &mut Vec<Value>,
+    moves: &[Mv],
 ) -> Result<()> {
     let d_aliases = arr(&donor["aliases"]);
     let d_moves = arr(&donor["moves"]);
@@ -891,22 +902,14 @@ fn add_throws(
         return Ok(());
     };
     let mut made: HashMap<Mv, i64> = HashMap::new();
-
-    for (slot, button) in THROW_ATTEMPTS {
-        let attempt = t2.slot(slot as i64)?.context("no throw attempt move")?;
-        let mut connect = None;
-        for e in t2.entries(attempt)? {
-            if e.2 == 0x2C {
-                connect = t2.slot(e.4 as i64)?;
-                break;
-            }
-        }
-        let Some(connect) = connect else { continue };
-        let mut links: BTreeMap<u8, i64> = BTreeMap::new();
+    let donor_entries: Vec<(i64, Value)> =
+        iter_donor_entries(ctx, donor)?.iter().map(|c| (int(&c["cmd"]) & 0xF, c["dest"].clone())).collect();
+    // the connect move's throws in its list's order: (the held directions' cmd, Tekken 2 cond, the thrower's alias)
+    let mut links_of = |connect: Mv, out: &mut Value, cancels: &mut Vec<Value>| -> Result<Vec<(u16, u8, i64)>> {
+        let mut links = Vec::new();
         for e in t2.entries(connect)? {
             if e.0 != 0xFFFF
                 && (e.2 == 2 || e.2 == 3)
-                && !links.contains_key(&e.2)
                 && let Some(r) = t2.slot(e.4 as i64)?
             {
                 let ta = match made.get(&r) {
@@ -917,9 +920,29 @@ fn add_throws(
                         ta
                     }
                 };
-                links.insert(e.2, ta);
+                links.push((e.0, e.2, ta));
             }
         }
+        Ok(links)
+    };
+    // an attempt's entries for Tekken 3's cond, made from a donor attempt's entry
+    let entries = |links: &[(u16, u8, i64)], template: &Value, cond: i64| -> Vec<Value> {
+        let t2cond = if cond == 2 { 2 } else { 3 };
+        let mut lst = Vec::new();
+        for &(cmd, _, dest) in links.iter().filter(|l| l.1 == t2cond) {
+            let mut c = template.clone();
+            (c["cmd"], c["input"], c["cond"], c["dest"]) =
+                (json!(cmd), json!(input_name(cmd)), json!(cond), json!(dest));
+            lst.push(c);
+        }
+        lst
+    };
+    let mut template: Option<(Value, Value)> = None;
+
+    for (slot, button) in THROW_ATTEMPTS {
+        let attempt = t2.slot(slot as i64)?.context("no throw attempt move")?;
+        let Some(connect) = connect_of(t2, attempt)? else { continue };
+        let links = links_of(connect, out, cancels)?;
         // the donor's attempts for this button (every alias its lists use for a 1+3 / 2+4 attempt)
         for (a, r) in d_aliases.iter().enumerate() {
             if r["bank"] != "own" {
@@ -937,25 +960,24 @@ fn add_throws(
             if !lst.iter().take(8).any(|c| int(&c["cond"]) == 2) {
                 continue;
             }
-            if !iter_donor_entries(ctx, donor)?
-                .iter()
-                .any(|c| int(&c["cmd"]) & 0xF == button && c.get("dest") == Some(&json!(a)))
-            {
+            if !donor_entries.iter().any(|(b, d)| *b == button && *d == json!(a)) {
                 continue;
             }
             let mut new = idx(&out["moves"], mi)?.clone();
             obj(&mut new)?.insert("cancel_start".into(), json!(cancels.len()));
             for c in lst {
-                let mut c = c.clone();
-                if c["kind"] == "command" && matches!(int(&c["cond"]), 2..=4) {
-                    let k = if int(&c["cond"]) == 2 { 2 } else { 3 };
-                    if let Some(l) = links.get(&k) {
-                        c["dest"] = json!(l);
-                    }
+                let cond = int(&c["cond"]);
+                let ours =
+                    if c["kind"] == "command" && (2..=5).contains(&cond) { entries(&links, c, cond) } else { vec![] };
+                if cond == 2 && template.is_none() {
+                    template = Some((m.clone(), c.clone()));
                 }
-                let is_end = c["kind"] == "end";
-                cancels.push(c);
-                if is_end {
+                if ours.is_empty() {
+                    cancels.push(c.clone());
+                } else {
+                    cancels.extend(ours);
+                }
+                if c["kind"] == "end" {
                     break;
                 }
             }
@@ -963,7 +985,44 @@ fn add_throws(
             out["aliases"][a] = json!({"bank": "own", "move": i});
         }
     }
+    // the command throws: the transplanted attempt grabs as the donor's does (its reaction, contact and flags), the
+    // links first, then its own list
+    let Some((tm, tc)) = template else { return Ok(()) };
+    for (i, &r) in moves.iter().enumerate() {
+        let Some(connect) = connect_of(t2, r)? else { continue };
+        let m = int(&out["aliases"][ALIAS_BASE + i]["move"]) as usize;
+        if int(&out["moves"][m]["active"][0]) == 0 {
+            continue;
+        }
+        let links = links_of(connect, out, cancels)?;
+        if links.is_empty() {
+            continue;
+        }
+        let mv = &mut out["moves"][m];
+        for k in ["damage", "damage_type", "attack_mask", "reaction", "close_range", "hitstop", "flags24"] {
+            mv[k] = tm[k].clone();
+        }
+        let start = int(&mv["cancel_start"]) as usize;
+        mv["cancel_start"] = json!(cancels.len());
+        let end =
+            cancels.iter().skip(start).position(|c| c["kind"] == "end").context("a command list without its END")?;
+        let own: Vec<Value> = cancels[start..=start + end].to_vec();
+        for cond in 2..=5 {
+            cancels.extend(entries(&links, &tc, cond));
+        }
+        cancels.extend(own);
+    }
     Ok(())
+}
+
+/// The connect move a Tekken 2 attempt goes on to when it grabs (cond 0x2C, +0x8B).
+fn connect_of(t2: &T2Set, attempt: Mv) -> Result<Option<Mv>> {
+    for e in t2.entries(attempt)? {
+        if e.0 != 0xFFFF && e.2 == 0x2C {
+            return t2.slot(e.4 as i64);
+        }
+    }
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -992,7 +1051,12 @@ fn throw_move(
     o.insert("properties".into(), json!(t3_properties(t2, v, 0)?));
     o.insert("motion_tag".into(), json!(n_moves));
     o.insert("source".into(), vf.source(v));
-    let va = new_alias(out)?;
+    // (its alias apart from every other set's: a victim plays its own set's alias of that number first, 0x8002D75C)
+    let va = VICTIM_ALIASES + throw_victims.len();
+    let aliases = list(&mut out["aliases"])?;
+    if aliases.len() <= va {
+        aliases.resize(va + 1, json!({"bank": "none", "move": null}));
+    }
     let vi = add_move(out, vmv)?;
     out["aliases"][va] = json!({"bank": "own", "move": vi});
     throw_victims.push(json!(va));

@@ -32,8 +32,9 @@ use std::io::Read;
 pub const FORMAT: i64 = 1;
 /// What the install writes from a pack: when it changes, an installed pack is installed again (its pack stays as it is).
 /// 2: the throw victims in install order, the walks' throws and Tekken 3 movement. 3: Tekken 2's own win poses, no
-/// intros (the stance).
-pub const INSTALL: i64 = 3;
+/// intros (the stance). 4: the throw victims' aliases apart from every other set's, the command throws grab, held directions
+/// pick a throw's variant.
+pub const INSTALL: i64 = 4;
 /// What a pack's manifest names it.
 pub const KIND: &str = "t2";
 /// The disc's files a pack keeps (the pack's name, the disc's).
