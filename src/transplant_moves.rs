@@ -725,6 +725,19 @@ pub fn build(
     let neutral_move = int(&donor["aliases"][NEUTRAL as usize]["move"]) as usize;
     let st = idx(&donor["moves"], neutral_move as i64)?;
     let t2_first: Vec<Value> = convert_list(stance, true)?.into_iter().filter(|e| e["kind"] != "end").collect();
+    // (the full crouch: where the stance's d goes at its END)
+    let mut crouch = None;
+    for (cmd, _, cond, _, dest, ..) in t2.entries(stance)? {
+        if cmd & !0x10 == 0x40
+            && cond == 0
+            && let Some(down) = t2.slot(dest as i64)?
+        {
+            let end = t2.entries(down)?.into_iter().find(|e| e.0 == 0xFFFF);
+            crouch = end.map(|e| t2.slot(e.4 as i64)).transpose()?.flatten();
+            break;
+        }
+    }
+    let t2_lists = [t2_first.clone(), crouch.map(|c| convert_list(c, false)).transpose()?.unwrap_or_default()];
     let mut kept: Vec<&Value> = Vec::new();
     let mut end = None;
     for e in arr(&donor["cancels"]).iter().skip(int(&st["cancel_start"]) as usize) {
@@ -854,7 +867,7 @@ pub fn build(
             mv.shift_remove(k);
         }
     }
-    donor_moves_off(ctx, donor, &mut out, &mut cancels, neutral_move, throw_victims)?;
+    donor_moves_off(ctx, donor, &mut out, &mut cancels, neutral_move, throw_victims, &t2_lists)?;
     for (i, c) in cancels.iter_mut().enumerate() {
         obj(c)?.insert("index".into(), json!(i));
     }
@@ -865,17 +878,20 @@ pub fn build(
 /// No move of the donor's own stays (#302): an alias a button enters (the set's lists, common.json's, the shared
 /// ones) for a donor move playing one of its own motions (attacks, taunts, stances, chain throws) or one going on into
 /// those without a button is off, and so is a throw's link into one of the donor's own throws: the engine takes no
-/// command into it and borrows nothing. The set's own entries into one go to the Tekken 2 stance's move of the same
-/// command instead, where it has one; an alias all whose entries (the common and shared lists' too) are such a command
-/// becomes that move (standing up out of a crouch, f+1 is Tekken 2's f+1). The common clips' moves, movement (a run's
-/// tackle), guard, reactions, getting up and the throw victims stay.
+/// command into it and borrows nothing. An off alias becomes the Tekken 2 move its inputs play: each direction and
+/// buttons reaching it first in a list still played (the set's, the common and shared ones) votes for what Tekken 2's
+/// stance (`t2_lists[0]`) or, from a crouch, its full crouch (`[1]`) plays for them; so standing up out of a crouch
+/// f+1 is Tekken 2's f+1. The set's own entries into one go where their own votes do (else to the stance's move of the
+/// same command; a crouching move gets its shared lists inlined for that): a full crouch's d+2 is its d/b|d+2. The
+/// common clips' moves, movement (a run's tackle), guard, reactions, getting up and the throw victims stay.
 fn donor_moves_off(
     ctx: &Ctx,
     donor: &Value,
     out: &mut Value,
-    cancels: &mut [Value],
+    cancels: &mut Vec<Value>,
     neutral_move: usize,
     throw_victims: &[Value],
+    t2_lists: &[Vec<Value>; 2],
 ) -> Result<()> {
     let n_donor = arr(&donor["moves"]).len();
     let victims: BTreeSet<i64> = ctx
@@ -951,30 +967,159 @@ fn donor_moves_off(
     {
         stance.entry(int(&e["cmd"])).or_insert(int(&e["dest"]));
     }
-    // (an alias every entry of which, the common and shared lists' too, is a command the stance has: that move, so
-    // f+1 standing up is Tekken 2's)
-    let mut same: BTreeMap<i64, Option<i64>> = BTreeMap::new();
-    for e in cancels.iter().chain(&ctx.common_cancels).chain(&ctx.shared_cancels).filter(|e| command(e)) {
-        let a = int(&e["dest"]);
-        if off.contains(&a) {
-            let t2 = (e["kind"] == "command" && int(&e["transition"]) & 0x7F != 0x21)
-                .then(|| stance.get(&int(&e["cmd"])).copied())
-                .flatten();
-            same.entry(a).and_modify(|s| *s = s.filter(|&s| Some(s) == t2)).or_insert(t2);
+    // the votes (lying states have none: Tekken 2's ground moves are not taken)
+    let t2_cells = t2_lists.each_ref().map(|l| first_cells(l, 0, &[]));
+    let t2_answer = |crouching: bool, d: i64, b: i64| {
+        let cell = t2_cells[usize::from(crouching)].iter().find(|c| c.1 == d && c.2 == b && int(&c.0["cond"]) == 0);
+        cell.map(|c| int(&c.0["dest"])).filter(|&a| a != NEUTRAL)
+    };
+    let played: BTreeSet<i64> = arr(&out["aliases"])
+        .iter()
+        .enumerate()
+        .filter(|(a, r)| r["bank"] == "own" && !off.contains(&(*a as i64)))
+        .map(|(_, r)| int(&r["move"]))
+        .collect();
+    let cells = |list, start| first_cells(list, start, &ctx.shared_cancels);
+    let set_lists =
+        moves.iter().enumerate().filter(|(m, _)| played.contains(&(*m as i64))).map(|(_, m)| (m, cancels.as_slice()));
+    // (by alias, and by the set's own entry: a crouch's d+2 is the full crouch's, a standing one the stance's)
+    let index: HashMap<usize, usize> =
+        cancels.iter().enumerate().map(|(i, e)| (e as *const Value as usize, i)).collect();
+    let (mut votes, mut entry_votes) = (BTreeMap::new(), BTreeMap::new());
+    for (m, list) in set_lists.chain(ctx.common_t3.iter().map(|m| (m, ctx.common_cancels.as_slice()))) {
+        let (Some(start), base) = (m["cancel_start"].as_u64(), int(&m["posture"]["base"])) else { continue };
+        for (e, d, b) in cells(list, start as usize) {
+            let a = int(&e["dest"]);
+            if base == 4 || !off.contains(&a) || int(&e["transition"]) & 0x7F == 0x21 {
+                continue;
+            }
+            if let Some(t2) = t2_answer(base == 1, d, b) {
+                *votes.entry(a).or_insert_with(BTreeMap::new).entry(t2).or_insert(0) += 1;
+                if let Some(&i) = index.get(&(e as *const Value as usize)) {
+                    *entry_votes.entry(i).or_insert_with(BTreeMap::new).entry(t2).or_insert(0) += 1;
+                }
+            }
         }
     }
-    for e in cancels.iter_mut().filter(|e| command(e) && off.contains(&int(&e["dest"]))) {
-        if let Some(&t2) = stance.get(&int(&e["cmd"])) {
+    let most = |v: &BTreeMap<i64, usize>| v.iter().max_by_key(|&(t2, n)| (*n, std::cmp::Reverse(*t2))).map(|x| *x.0);
+    // a donor's own copy of a lying common move (the only one of its clip and next) whose list goes into an off alias
+    // (Lei's: his own ground moves) is the common move, the system's list
+    let mut lying = BTreeMap::new();
+    for (m, mv) in moves.iter().enumerate().filter(|(_, mv)| int(&mv["posture"]["base"]) == 4) {
+        let copy = |c: &Value| c["anim"] == mv["anim"] && c["next"]["alias"] == mv["next"]["alias"];
+        let mut same = ctx.common_t3.iter().enumerate().filter(|(_, c)| copy(c)).map(|(c, _)| c);
+        let common = same.next().filter(|_| same.next().is_none());
+        if let (Some(c), Some(start)) = (common, mv["cancel_start"].as_u64())
+            && played.contains(&(m as i64))
+            && cells(cancels, start as usize).iter().any(|e| off.contains(&int(&e.0["dest"])))
+        {
+            lying.insert(m as u64, c);
+        }
+    }
+    // a crouching move of the set whose lists go into an off alias where Tekken 2's full crouch plays another move than
+    // the alias becomes gets a list of its own, the shared ones inlined, going to the full crouch's (a full crouch's d+2
+    // is its d/b|d+2, the stance's d+2 another move)
+    let mut crouching = Vec::new();
+    for (m, mv) in
+        moves.iter().enumerate().filter(|(m, mv)| played.contains(&(*m as i64)) && mv["posture"]["base"] == 1)
+    {
+        let Some(start) = mv["cancel_start"].as_u64() else { continue };
+        let mut lst: Vec<Value> = Vec::new();
+        for e in cancels.iter().skip(start as usize) {
+            if e["kind"] == "call" {
+                let s = ctx.shared_cancels.iter().skip(int(&e["dest"]) as usize);
+                lst.extend(s.take_while(|s| s["kind"] != "return" && s["kind"] != "end").cloned());
+                continue;
+            }
+            lst.push(e.clone());
+            if e["kind"] == "end" {
+                break;
+            }
+        }
+        let at: HashMap<usize, usize> = lst.iter().enumerate().map(|(i, e)| (e as *const Value as usize, i)).collect();
+        let mut own_votes = BTreeMap::new();
+        for (e, d, b) in first_cells(&lst, 0, &[]) {
+            let a = int(&e["dest"]);
+            if let (true, Some(t2), Some(&i)) = (
+                off.contains(&a) && int(&e["transition"]) & 0x7F != 0x21,
+                t2_answer(true, d, b),
+                at.get(&(e as *const Value as usize)),
+            ) {
+                *own_votes.entry(i).or_insert_with(BTreeMap::new).entry(t2).or_insert(0) += 1;
+            }
+        }
+        let new: Vec<(usize, i64)> = own_votes
+            .iter()
+            .filter_map(|(&i, v)| most(v).map(|t2| (i, t2)))
+            .filter(|&(i, t2)| votes.get(&int(&lst[i]["dest"])).and_then(most) != Some(t2))
+            .collect();
+        if !new.is_empty() {
+            for (i, t2) in new {
+                lst[i]["dest"] = json!(t2);
+            }
+            crouching.push((m, lst));
+        }
+    }
+    for (i, e) in cancels.iter_mut().enumerate().filter(|(_, e)| command(e) && off.contains(&int(&e["dest"]))) {
+        if let Some(t2) = entry_votes.get(&i).and_then(most).or_else(|| stance.get(&int(&e["cmd"])).copied()) {
             e["dest"] = json!(t2);
         }
     }
+    for (m, lst) in crouching {
+        out["moves"][m]["cancel_start"] = json!(cancels.len());
+        cancels.extend(lst);
+    }
     for a in off {
-        out["aliases"][a as usize] = match same.get(&a).copied().flatten() {
+        out["aliases"][a as usize] = match votes.get(&a).and_then(most) {
             Some(t2) => out["aliases"][t2 as usize].clone(),
             None => json!({"bank": "off", "move": null}),
         };
     }
+    for r in list(&mut out["aliases"])?.iter_mut().filter(|r| r["bank"] == "own") {
+        if let Some(&c) = r["move"].as_u64().and_then(|m| lying.get(&m)) {
+            *r = json!({"bank": "common", "move": c});
+        }
+    }
     Ok(())
+}
+
+/// A command's directions (bits 5..13; none: any).
+fn dirs(cmd: i64) -> Vec<i64> {
+    let d: Vec<i64> = (5..14).filter(|k| cmd >> k & 1 != 0).collect();
+    if d.is_empty() { (5..14).collect() } else { d }
+}
+
+/// A list's button commands (its shared lists' too) with the direction and buttons each is the first to take:
+/// (entry, direction, buttons). An entry of no condition and no window leaves them to none after it.
+fn first_cells<'a>(list: &'a [Value], start: usize, shared: &'a [Value]) -> Vec<(&'a Value, i64, i64)> {
+    let (mut out, mut taken) = (Vec::new(), BTreeSet::new());
+    for e in list.iter().skip(start) {
+        let sub: Vec<&Value> = if e["kind"] == "call" {
+            let s = shared.iter().skip(int(&e["dest"]) as usize);
+            s.take_while(|s| s["kind"] != "return" && s["kind"] != "end").collect()
+        } else {
+            vec![e]
+        };
+        for e in sub.into_iter().filter(|e| e["kind"] == "command" && int(&e["cmd"]) & 0xC000 == 0) {
+            // (a held direction of no button, 0x10, takes it with any: 0 stands for all of them)
+            let (cmd, b) = (int(&e["cmd"]), int(&e["cmd"]) & 0xF);
+            let free = |d: i64| !taken.contains(&(d, b)) && !taken.contains(&(d, 0));
+            for d in dirs(cmd).into_iter().filter(|&d| b != 0 && free(d)) {
+                out.push((e, d, b));
+            }
+            if (b != 0 || cmd & 0x10 != 0)
+                && int(&e["cond"]) == 0
+                && int(&e["win_start"]) <= 1
+                && int(&e["win_end"]) >= 255
+            {
+                taken.extend(dirs(cmd).into_iter().map(|d| (d, b)));
+            }
+        }
+        if e["kind"] == "end" {
+            break;
+        }
+    }
+    out
 }
 
 /// A Tekken 2 move's voices (its sound list, 0x80073174) as port sound entries: type 4 / 5 a voice on frame 1 (type
@@ -1308,4 +1453,26 @@ pub fn motion_frames(t2: &T2Set, r: Mv) -> Result<u8> {
     let o = t2.motion(r)? as usize;
     let (buf, at) = if r.common { (&t2.d.exe[..], (COMMON_MOTIONS - EXE) as usize + o) } else { (&t2.mv[..], o) };
     buf.get(at).copied().context("a motion past its record")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A held direction of no button takes it with every button (u+1 jumps); a windowed or conditional entry leaves its
+    /// cells to the entries after it; a call's entries count in its place.
+    #[test]
+    fn the_first_entry_takes_a_direction_and_buttons() {
+        let e = |cmd: i64, dest: i64, cond: i64, win: [i64; 2]| json!({"kind": "command", "cmd": cmd, "dest": dest, "cond": cond, "win_start": win[0], "win_end": win[1]});
+        let (u, n, all) = (1 << 12, 1 << 9, [1, 255]);
+        let list =
+            [e(u | 0x10, 1, 0, all), e(n | 1, 2, 0, [1, 5]), json!({"kind": "call", "dest": 0}), e(1, 4, 0, all)];
+        let shared = [e(n | 1, 3, 7, all), json!({"kind": "return"})];
+        let first = |d: i64, b: i64| -> Vec<i64> {
+            first_cells(&list, 0, &shared).iter().filter(|c| c.1 == d && c.2 == b).map(|c| int(&c.0["dest"])).collect()
+        };
+        assert_eq!(first(12, 1), [] as [i64; 0]);
+        assert_eq!(first(9, 1), [2, 3, 4]);
+        assert_eq!(first(5, 1), [4]);
+    }
 }
