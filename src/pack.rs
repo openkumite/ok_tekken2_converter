@@ -38,8 +38,9 @@ pub const FORMAT: i64 = 1;
 /// hits' character spark and light, the donor's (effects.json). 7: a knockdown takes the donor reaction whose victim goes
 /// as high (a fall is no launch). 8: the donor's own moves are off (aliases "off": its attacks, taunts, stances,
 /// chain throws), its stance's commands go to Tekken 2's. 9: Angel's and Alex's moves pass Devil's and Roger's
-/// character gates (the fighter's select slot).
-pub const INSTALL: i64 = 9;
+/// character gates (the fighter's select slot). 10: an off alias is the Tekken 2 move its inputs play (from a crouch,
+/// the full crouch's: d+2 is its crouching 2).
+pub const INSTALL: i64 = 10;
 /// What a pack's manifest names it.
 pub const KIND: &str = "t2";
 /// The disc's files a pack keeps (the pack's name, the disc's).

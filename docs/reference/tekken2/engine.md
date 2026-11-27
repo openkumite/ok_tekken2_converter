@@ -246,8 +246,11 @@ Tekken 2's select face (record 19).
     the shared ones) for a donor move playing one of its own motions, or one going on into those, is
     `"bank": "off"` (OpenKumite takes no command into it and borrows nothing); so is a throw's link (0x21) into the
     donor's own throws (King's chain throws). The set's entries into one go to the Tekken 2 stance's move of the same
-    command where it has one, and an alias all whose entries (common.json's and the shared ones too) are such a
-    command is that move (standing up out of a crouch, f+1 is Tekken 2's f+1). The common clips' moves (a crouch's jab,
+    command where it has one. An off alias becomes the Tekken 2 move its inputs play: each direction and buttons that
+    reach it first in a list still played (the set's, common.json's, the shared ones) votes for the move Tekken 2's
+    stance plays for them, or from a crouch its full crouch (where the stance's d goes at its END): standing up out of
+    a crouch f+1 is Tekken 2's f+1, a full crouch's d+2 its d/b|d+2. A donor's own copy of a lying common move that
+    goes into one (Lei's ground moves) is the common move. The common clips' moves (a crouch's jab,
     the jumps' and getting up's kicks: every Tekken 3 fighter's), movement, guard, reactions and the throw victims stay.
   - Home arena: the character table's +6 stage. Kazuya's and Jun's are 30 / 31, the others' 60 + the Tekken 2 stage.
   - Select faces: record 19 by Tekken 2 id. Alex's id holds the random "?", so he takes Roger's (his block pair's, block // 2).
