@@ -215,7 +215,9 @@ Tekken 2's select face (record 19).
     0x2D / 0x2E +0xBA == 0 / != 0; 0x33 +0x1DC == 0; 0x35 +0xBC == 0. Taken: 0x19 and 0x2D.
   - Hit reactions: each attack takes the reaction of the donor's closest attack with the same outcome. The
     outcome is the front standing victim of its Tekken 2 reaction (slot 7): lying (posture & 7 = 4) = knocked
-    down or launched, else a hit. Level, limb and damage decide among those.
+    down or launched, else a hit. Level and limb decide among those, then a hit's damage, a knockdown's height: the
+    highest the victim's root goes (Tekken 2 motion channel 1; the donor victim clip's root), so a fall stays a fall
+    (Kuma's Double Hammer: 1046 mm, not a 2.1 m launcher's).
 - **Arenas:** their Tekken 2 home stages become OpenKumite's stages 30 (Kazuya's, T2 stage 22) and 31 (Jun's,
   T2 stage 3), their home stages. `export_stages.convert(port=True)` writes the panorama and fills as a 'sky' drum
   that OpenKumite centres on the camera and draws first. The floor map is laid 3 x 3 times and clipped by OpenKumite

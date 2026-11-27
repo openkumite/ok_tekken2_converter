@@ -21,7 +21,7 @@
 //! jump attacks, throws (the donor's are kept), timed properties and sounds (the closest donor attack's are used,
 //! with its hit reaction).
 
-use crate::export_characters::{BLOCK0, Disc};
+use crate::export_characters::{BLOCK0, Decoder, Disc, off};
 use crate::transplant::{T2_TO_T3, t3_parent};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Map, Value, json};
@@ -448,11 +448,11 @@ fn zero_active(m: &Value) -> bool {
     m["active"] == json!([0, 0])
 }
 
-/// What a donor attack does to a standing victim hit from the front (reaction slot 0): 'down' (knocked down or
-/// launched: a lying or airborne victim move) or 'hit'.
-fn outcome_t3(ctx: &Ctx, donor: &Value, m: &Value) -> Result<bool> {
+/// What a donor attack does to a standing victim hit from the front (reaction slot 0): its victim move's clip when
+/// that knocks down or launches (a lying or airborne victim move), None for a hit.
+fn outcome_t3(ctx: &Ctx, donor: &Value, m: &Value) -> Result<Option<String>> {
     if ctx.reactions_t3.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
     let ri = int(&m["reaction"]["index"]);
     let vic = int(&ctx.reactions_t3.get(ri as usize).with_context(|| format!("no reaction {ri}"))?["victims"][0]);
@@ -464,23 +464,32 @@ fn outcome_t3(ctx: &Ctx, donor: &Value, m: &Value) -> Result<bool> {
         Some("common") if !ctx.common_t3.is_empty() => ctx.common_t3.get(int(&r["move"]) as usize),
         _ => None,
     };
-    let Some(v) = v else { return Ok(false) };
-    Ok(int(&v["posture"]["raw"]) & 0x400 != 0 || int(&v["posture"]["base"]) == 4)
+    let Some(v) = v else { return Ok(None) };
+    let down = int(&v["posture"]["raw"]) & 0x400 != 0 || int(&v["posture"]["base"]) == 4;
+    Ok(down.then(|| v["anim"].as_str().unwrap_or("").to_string()))
 }
 
-/// The same for a Tekken 2 reaction (0x8003E5B4 slot 7, the front standing victim): posture lying = down.
-fn outcome_t2(t2: &T2Set, rid: i16) -> Result<bool> {
-    let v = t2.slot(t2.reaction_entry(rid)?[7] as i64)?;
-    Ok(match v {
-        Some(v) => t2.fields(v)?.posture & 7 == 4,
-        None => false,
-    })
+/// The same for a Tekken 2 reaction (0x8003E5B4 slot 7, the front standing victim): posture lying = down, with the
+/// highest its root goes in the victim's motion (channel 1, mm: 0x8006234C), None for a hit.
+fn outcome_t2(t2: &T2Set, decoders: &mut [Decoder; 2], rid: i16) -> Result<Option<i64>> {
+    let Some(v) = t2.slot(t2.reaction_entry(rid)?[7] as i64)? else { return Ok(None) };
+    if t2.fields(v)?.posture & 7 != 4 {
+        return Ok(None);
+    }
+    let buf = if v.common { common_motions(t2) } else { &t2.mv[..] };
+    let frames = decoders[usize::from(v.common)].decode(buf, t2.motion(v)? as usize)?;
+    Ok(Some(frames.iter().map(|c| i64::from(c[1])).max().unwrap_or(0)))
 }
 
-/// A donor attack: (level name, arm, damage, move, knocks down).
-type Template = (String, bool, i64, usize, bool);
+/// The EXE's common motions (their offsets are from 0x800D660C).
+fn common_motions<'a>(t2: &T2Set<'a>) -> &'a [u8] {
+    t2.d.exe.get(off(COMMON_MOTIONS)..).unwrap_or_default()
+}
 
-fn donor_templates(ctx: &Ctx, donor: &Value) -> Result<Vec<Template>> {
+/// A donor attack: (level name, arm, damage, move, knocks down: the highest its victim's root goes, mm).
+type Template = (String, bool, i64, usize, Option<i64>);
+
+fn donor_templates(ctx: &Ctx, donor: &Value, world: &mut World) -> Result<Vec<Template>> {
     let mut out = Vec::new();
     for (i, m) in arr(&donor["moves"]).iter().enumerate() {
         let a = &m["attack"];
@@ -493,25 +502,37 @@ fn donor_templates(ctx: &Ctx, donor: &Value) -> Result<Vec<Template>> {
         {
             let arm = a["bones"].get("end0").map_or(0xC, int) < 0xC;
             let level = m["attack_mask"]["level_name"].as_str().unwrap_or("").to_string();
-            out.push((level, arm, int(&m["damage"]), i, outcome_t3(ctx, donor, m)?));
+            // (a clip past its end stays on its last frame: 120 frames hold every victim move)
+            let peak = match outcome_t3(ctx, donor, m)? {
+                Some(clip) => Some((0..120).try_fold(i64::MIN, |p, f| {
+                    world(&clip, f, "root").map(|r| p.max((r[1] * 1000.0).round() as i64))
+                })?),
+                None => None,
+            };
+            out.push((level, arm, int(&m["damage"]), i, peak));
         }
     }
     Ok(out)
 }
 
-/// The donor attack closest to a Tekken 2 one: same outcome (down / hit), level and limb first.
-fn pick_template(templates: &[Template], level: &str, arm: bool, damage: i64, outcome: bool) -> Result<usize> {
+/// The donor attack closest to a Tekken 2 one: same outcome (down / hit), level and limb first; then a hit's
+/// damage, a knockdown's height (a fall is no launch).
+fn pick_template(templates: &[Template], level: &str, arm: bool, damage: i64, peak: Option<i64>) -> Result<usize> {
     let keeps: [&dyn Fn(&Template) -> bool; 5] = [
-        &|t| t.4 == outcome && t.0 == level && t.1 == arm,
-        &|t| t.4 == outcome && t.0 == level,
-        &|t| t.4 == outcome,
+        &|t| t.4.is_some() == peak.is_some() && t.0 == level && t.1 == arm,
+        &|t| t.4.is_some() == peak.is_some() && t.0 == level,
+        &|t| t.4.is_some() == peak.is_some(),
         &|t| t.0 == level,
         &|_| true,
     ];
+    let far = |t: &Template| match (t.4, peak) {
+        (Some(a), Some(b)) => (a - b).abs(),
+        _ => (t.2 - damage).abs(),
+    };
     for keep in keeps {
         let mut best: Option<&Template> = None;
         for t in templates.iter().filter(|t| keep(t)) {
-            if best.is_none_or(|b| (t.2 - damage).abs() < (b.2 - damage).abs()) {
+            if best.is_none_or(|b| far(t) < far(b)) {
                 best = Some(t);
             }
         }
@@ -575,7 +596,8 @@ pub fn build(
         let need = (ALIAS_BASE + moves.len()).saturating_sub(aliases.len());
         aliases.extend((0..need).map(|_| json!({"bank": "none", "move": null})));
     }
-    let templates = donor_templates(ctx, donor)?;
+    let templates = donor_templates(ctx, donor, world_of)?;
+    let mut decoders = [Decoder::new(&t2.d.exe, &t2.mv), Decoder::new(&t2.d.exe, common_motions(t2))];
     let tpl_moves = arr(&donor["moves"]);
     let mut cancels: Vec<Value> = arr(&out["cancels"]).to_vec();
 
@@ -668,7 +690,8 @@ pub fn build(
         };
         mv["attack_mask"] = json!({"raw": level.2, "mask": level.2, "level": level.1, "level_name": level.0});
         if a0 != 0 {
-            let ti = pick_template(&templates, level.0, arm, f.damage as i64, outcome_t2(t2, f.reaction)?)?;
+            let ti =
+                pick_template(&templates, level.0, arm, f.damage as i64, outcome_t2(t2, &mut decoders, f.reaction)?)?;
             let t = &tpl_moves[ti];
             for k in ["reaction", "close_range", "hitstop", "push_control", "flags24", "sounds", "sound_list", "desc0"]
             {
