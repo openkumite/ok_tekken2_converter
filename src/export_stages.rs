@@ -253,6 +253,70 @@ pub fn floor_atlas(info: &Info, pages: &mut Pages) -> Result<(Rgba, HashMap<(u32
     Ok((a, place))
 }
 
+/// The floor's CLUT animations (section 0's extra != 0, Lei's stage: set up by 0x800822C4, run each frame by
+/// 0x800824A4): 3 entries of 0xBC at 0x800A2FF8, {RECT a, RECT b, s16 blend, first, last, turn, from, to}. A blend
+/// entry's colours first..last go from CLUT a toward CLUT b by f = (cos p + 1) / 2 (p += 0x11 a frame of 4096 a turn,
+/// the table 0x800575A4), each 5-bit channel a + (d f + 0x200) >> 10 (0x800871E4's GTE GPF; the STP bit dropped); a
+/// turning one moves colours from..to a place down (the first to the end) each time q (+= 0x6AA a frame) passes a
+/// multiple of 0x4000. As OpenKumite's texture channels (image, rect, first, frames, speed): each animated floor
+/// picture's frames, the turns 4 x 32 at 853 / 256 a frame (exact), the blends 256 at 272 / 256 (p within 16 of the
+/// PS1's). shortcut: the PS1's counters run on from power-on, these start at 0; upgrade: none needed (unseen).
+fn clut_channels(
+    disc: &Disc,
+    rec0: &[u8],
+    info: &Info,
+    place: &HashMap<(u32, u32, u32), (usize, usize)>,
+) -> Result<Vec<(Vec<Rgba>, [usize; 2], u32)>> {
+    let exe = |a: u32, n: usize| py_slice(&disc.exe, off(a), off(a) + n);
+    let cos = exe(0x800575A4, 0x2000);
+    let mut v = vram(rec0)?;
+    let n = info.texels as usize;
+    let mut out = Vec::new();
+    for k in 0..3 {
+        let e = exe(0x800A2FF8 + 0xBC * k, 0x1C);
+        let h = |o: usize| i16_(e, o).map(|x| usize::try_from(x).unwrap_or(usize::MAX));
+        let (ax, ay, bx, by) = (h(0)?, h(2)?, h(8)?, h(10)?);
+        let (blend, turn) = (h(0x10)? != 0, h(0x16)? != 0);
+        let (lo, hi) = if blend { (h(0x12)?, h(0x14)?) } else { (h(0x18)?, h(0x1A)?) };
+        if !(blend || turn) || hi < lo || hi > 15 || ax.max(bx) > 1008 || ay.max(by) >= 512 {
+            continue;
+        }
+        let a: Vec<u16> = (0..16).map(|i| v.get(ay, ax + i)).collect();
+        let b: Vec<u16> = (0..16).map(|i| v.get(by, bx + i)).collect();
+        let clut = ((ay << 6) | (ax >> 4)) as u32;
+        let (frames, speed) = if blend { (256, 272) } else { (128, 853) };
+        for (&(uv, tp, c), &at) in place.iter().filter(|(key, _)| key.2 == clut) {
+            let mut pics = Vec::new();
+            for t in 0..frames {
+                let mut lut = a.clone();
+                if blend {
+                    let p = 16 * t;
+                    let f = (i32::from(i16_(cos, 2 * p)?) + 0x1000) / 2 / 4;
+                    for i in lo..=hi {
+                        let ch = |w: u16, s: u32| i32::from((w >> s) & 31);
+                        lut[i] = [0, 5, 10]
+                            .iter()
+                            .map(|&s| {
+                                (((ch(a[i], s) + (((ch(b[i], s) - ch(a[i], s)) * f + 0x200) >> 10)) & 31) as u16) << s
+                            })
+                            .sum();
+                    }
+                } else {
+                    lut[lo..=hi].rotate_left(t / 32 % (hi - lo + 1));
+                }
+                v.0[ay * 1024 + ax..ay * 1024 + ax + 16].copy_from_slice(&lut);
+                let mut pic = Rgba::new(n, n);
+                pic.paste(0, 0, n, n, &page_texels(&v, &v, tp, c), (uv & 255) as usize, (uv >> 8) as usize)?;
+                pics.push(pic);
+            }
+            out.push((pics, [at.0, at.1], speed));
+        }
+        v.0[ay * 1024 + ax..ay * 1024 + ax + 16].copy_from_slice(&a);
+    }
+    out.sort_by_key(|c| c.1);
+    Ok(out)
+}
+
 fn floor_div(a: i64, b: i64) -> i64 {
     a.div_euclid(b) - if b < 0 && a.rem_euclid(b) != 0 { 1 } else { 0 }
 }
@@ -385,6 +449,16 @@ pub fn convert(
         samplers.push(json!({"magFilter": 9728, "minFilter": 9728, "wrapS": wrap, "wrapT": 33071}));
         textures.push(json!({"source": images.len() - 1, "sampler": samplers.len() - 1}));
     }
+    // (the floor's CLUT animations: each picture's frames after the textures' images)
+    let mut channels = Vec::new();
+    if port && info.extra != 0 {
+        for (pics, [x, y], speed) in clut_channels(disc, disc.rec(base)?, &info, &place)? {
+            channels.push(json!({"image": 0, "rect": [x, y, n, n], "first": images.len(), "frames": pics.len(), "speed": speed, "start": 0}));
+            for p in &pics {
+                images.push(json!({"bufferView": g.view(&pil::png_bytes(p)?, None), "mimeType": "image/png", "name": "floor_clut"}));
+            }
+        }
+    }
     g.j.insert("images".into(), json!(images));
     g.j.insert("samplers".into(), json!(samplers));
     g.j.insert("textures".into(), json!(textures));
@@ -427,6 +501,9 @@ pub fn convert(
             "game": "tekken2", "camera_drum": true, "drum_before_floor": true, "drum_y_scale": 1.0,
             "floor_period": [period, period], "floor_patch": [tile as f64 * SCALE, 10], "floor_light": light,
             "note": "sky: a unit drum centred on the camera, drawn first without depth; floor: shown on the 10 x 10 tile patch around the fighters' midpoint snapped to whole tiles (the copies repeat every floor_period)"}}]));
+        if !channels.is_empty() {
+            j["scenes"][0]["extras"]["channels"] = json!(channels);
+        }
         j.insert("scene".into(), json!(0));
         g.write(out, out_path)?;
         return Ok((prims.len(), tris));

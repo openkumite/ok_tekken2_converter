@@ -620,10 +620,19 @@ pub fn build(
                 0xFFFD => ("backdash", 0xC002),
                 _ => ("command", cmd as i64),
             };
+            // walks and dashes track the opponent as Tekken 3's do (0x18, mode 8: they turn to face him)
+            let walk = !attack && cond == 0 && matches!(cmd, 0x410 | 0x110 | 0xFFFE | 0xFFFD);
+            let t = if attack {
+                12
+            } else if walk {
+                0x18
+            } else {
+                6
+            };
             lst.push(
                 json!({"cmd": c3, "kind": kind, "input": input_name(cmd), "req": 0, "cond": cond3(cond).unwrap_or(0),
                             "param": param, "dest": a, "win_start": ws, "win_end": we, "exec": tk,
-                            "transition": (if attack { 12 } else { 6 }) | (tr & 0x80) as i64}),
+                            "transition": t | (tr & 0x80) as i64}),
             );
         }
         if lst.last().is_none_or(|e| e["kind"] != "end") {
@@ -718,7 +727,7 @@ pub fn build(
     // the walks the stance takes from Tekken 2 (f, the dashes) are stood in like the stance: the donor's throws
     // first, then their Tekken 2 entries without the plain back / down ones, then the donor's movement (walking
     // back guards, up sidesteps or jumps, down crouches: Tekken 2's walk lists have none of it)
-    let mut walks = Vec::new();
+    let (mut walks, mut backdashes) = (Vec::new(), Vec::new());
     for (cmd, _, _, _, dest, ..) in t2.entries(stance)? {
         if matches!(cmd, 0x410 | 0xFFFE | 0xFFFD)
             && let Some(to) = t2.slot(dest as i64)?
@@ -726,25 +735,66 @@ pub fn build(
             && t2.fields(to)?.active.0 == 0
         {
             walks.push(to);
+            if cmd == 0xFFFD {
+                backdashes.push(to);
+            }
         }
     }
     let t2_moves = ["f", "dash", "backdash"];
+    // the dashes (where a kept f,f leads) run as the donor's: its dash's entries into the run (f held on at its frame
+    // 12, or let go far off), the Ultimate Tackle's way in (Tekken 2's own run is behind a distance condition, 0x08)
+    let mut dashes = Vec::new();
+    for &r in std::iter::once(&stance).chain(&moves) {
+        for ent in t2.entries(r)? {
+            if ent.0 == 0xFFFE
+                && keep_entry(t2, &ent)
+                && let Some(to) = t2.slot(ent.4 as i64)?
+                && moves.contains(&to)
+                && !dashes.contains(&to)
+            {
+                dashes.push(to);
+            }
+        }
+    }
+    let donor_list = |alias: i64| -> Vec<Value> {
+        let Some(m) = donor["aliases"].get(alias as usize).filter(|a| a["bank"] == "own") else { return vec![] };
+        let start = int(&donor["moves"][int(&m["move"]) as usize]["cancel_start"]) as usize;
+        arr(&donor["cancels"]).iter().skip(start).take_while(|e| e["kind"] != "end").cloned().collect()
+    };
+    let donor_dash = kept
+        .iter()
+        .find(|x| x["kind"] == "dash" && int(&x["cond"]) == 0)
+        .map_or(vec![], |x| donor_list(int(&x["dest"])));
+    let run_alias =
+        donor_dash.iter().find(|e| int(&e["cmd"]) == 0x410 && int(&e["cond"]) == 0).map(|e| e["dest"].clone());
+    let run: Vec<Value> = donor_dash
+        .into_iter()
+        .filter(|e| e["kind"] == "command" && int(&e["cmd"]) & 0xF == 0 && Some(&e["dest"]) == run_alias.as_ref())
+        .collect();
     // command lists of the transplanted moves
     for &r in &moves {
         let m = int(&out["aliases"][alias_of[&r] as usize]["move"]) as usize;
         out["moves"][m]["cancel_start"] = json!(cancels.len());
         let lst = convert_list(r, false)?;
+        let run = if dashes.contains(&r) { run.as_slice() } else { &[] };
         if !walks.contains(&r) {
+            cancels.extend(run.iter().cloned());
             cancels.extend(lst);
             continue;
         }
         let back_down = |e: &Value| int(&e["cmd"]) & 0xC00F == 0 && int(&e["cmd"]) & 0x4F << 5 != 0;
         let (own, end) = lst.split_at(lst.len() - 1);
+        // (a backdash goes on with back held, as Tekken 3's: the donor's walk back is left out of it)
+        let back = backdashes.contains(&r).then_some("b");
         cancels.extend(kept.iter().filter(|x| is_throw(x)).map(|x| (*x).clone()));
+        cancels.extend(run.iter().cloned());
         cancels.extend(own.iter().filter(|e| !back_down(e)).cloned());
         cancels.extend(
             kept.iter()
-                .filter(|x| !is_throw(x) && !t2_moves.contains(&x["input"].as_str().unwrap_or("")))
+                .filter(|x| {
+                    let input = x["input"].as_str().unwrap_or("");
+                    !is_throw(x) && !t2_moves.contains(&input) && Some(input) != back
+                })
                 .map(|x| (*x).clone()),
         );
         cancels.extend(end.iter().cloned());
