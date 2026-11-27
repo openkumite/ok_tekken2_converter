@@ -142,6 +142,11 @@ description is relocated by 0x80082074 and kept at 0x800D2E18 (sections at 0x800
   - Shade != 0: colour = 128 + T[min(1023, (sz - 10000) * 6710 >> 16)] * shade / 128, with T at 0x80056564.
   - Modes 1 and 2 (0x8008364C): 2000-unit tiles. Mode 1: min(254, 2^27 / d1² + 2^27 / d2²), d to each fighter.
     Mode 2: min(192, 0x7A120000 / d²), d to the fighters' midpoint.
+  - Extra != 0 (Lei's stage 5 alone): CLUT animations, set up by 0x800822C4 and run each frame by 0x800824A4 from
+    3 entries of 0xBC at 0x800A2FF8 {RECT a, RECT b, s16 blend, first, last, turn, from, to}. CLUTs (32, 492) and
+    (48, 492) turn colours 10..13 a place down each time q (+= 0x6AA a frame) passes a multiple of 0x4000; CLUT
+    (64, 492) blends colours 0..14 toward (144, 492) by f = (cos p + 1) / 2 (p += 0x11 a frame, table 0x800575A4;
+    GTE GPF, 0x800871E4). OpenKumite plays them as texture channels of the floor's pictures (scene extras `channels`).
 - **Panorama** (hrbg.c; init 0x80083F04, draw 0x80084560): drawn in screen space (512 x 240).
   - Section 7 holds the rows, 0x2C bytes each: {distance −1, scroll, x, y, w 64, h 32, map entries 96, first
     cell, map offset, packet buffers}. Section 1 holds the cells {u, v, CLUT, tpage}; section 2 the maps (s8 per
@@ -199,6 +204,10 @@ Tekken 2's select face (record 19).
     Tekken 3's 0xD67..0xD6A with their voice scripts. Tekken 2 has no intros (slot 0, a round's first move, is the
     stance's motion): Tekken 3's intro aliases 0..2 are the stance.
   - Jump attacks (byte +0x13 = 9) are taken with Tekken 3's airborne posture; plain jumps stay the donor's.
+  - Movement: f / b / the dashes into a move that is not an attack track as Tekken 3's walks (transition 0x18). The
+    dashes (where a kept f,f leads) take the donor dash's entries into the run (Tekken 2's own run, dash entry cond
+    0x08, is left out), so a run goes into the Ultimate Tackle; a backdash leaves out the donor's walk back (held back
+    goes on with it, as in Tekken 3).
   - Conditions (handlers 0x8004E230; a1 the fighter, a2 the opponent): 0x19 back turned (+0x28 > 0x4000) →
     Tekken 3's 0x24; 0x1E opponent attacking close; 0x27 / 0x2A opponent flag 0x40; 0x2C grabbed (+0x8B);
     0x2D / 0x2E +0xBA == 0 / != 0; 0x33 +0x1DC == 0; 0x35 +0xBC == 0. Taken: 0x19 and 0x2D.

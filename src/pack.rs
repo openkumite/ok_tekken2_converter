@@ -33,8 +33,9 @@ pub const FORMAT: i64 = 1;
 /// What the install writes from a pack: when it changes, an installed pack is installed again (its pack stays as it is).
 /// 2: the throw victims in install order, the walks' throws and Tekken 3 movement. 3: Tekken 2's own win poses, no
 /// intros (the stance). 4: the throw victims' aliases apart from every other set's, the command throws grab, held directions
-/// pick a throw's variant.
-pub const INSTALL: i64 = 4;
+/// pick a throw's variant. 5: the dashes run (the donor's run, into the Ultimate Tackle), a backdash goes on with back
+/// held, the walks and dashes track (0x18); Lei's stage's floor CLUT animations (texture channels).
+pub const INSTALL: i64 = 5;
 /// What a pack's manifest names it.
 pub const KIND: &str = "t2";
 /// The disc's files a pack keeps (the pack's name, the disc's).
