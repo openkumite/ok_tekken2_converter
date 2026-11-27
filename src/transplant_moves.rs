@@ -982,7 +982,10 @@ fn donor_moves_off(
     let cells = |list, start| first_cells(list, start, &ctx.shared_cancels);
     let set_lists =
         moves.iter().enumerate().filter(|(m, _)| played.contains(&(*m as i64))).map(|(_, m)| (m, &*cancels));
-    let mut votes: BTreeMap<i64, BTreeMap<i64, usize>> = BTreeMap::new();
+    // (by alias, and by the set's own entry: a crouch's d+2 is the full crouch's, a standing one the stance's)
+    let index: HashMap<usize, usize> =
+        cancels.iter().enumerate().map(|(i, e)| (e as *const Value as usize, i)).collect();
+    let (mut votes, mut entry_votes) = (BTreeMap::new(), BTreeMap::new());
     for (m, list) in set_lists.chain(ctx.common_t3.iter().map(|m| (m, ctx.common_cancels.as_slice()))) {
         let (Some(start), base) = (m["cancel_start"].as_u64(), int(&m["posture"]["base"])) else { continue };
         for (e, d, b) in cells(list, start as usize) {
@@ -991,10 +994,14 @@ fn donor_moves_off(
                 continue;
             }
             if let Some(t2) = t2_answer(base == 1, d, b) {
-                *votes.entry(a).or_default().entry(t2).or_default() += 1;
+                *votes.entry(a).or_insert_with(BTreeMap::new).entry(t2).or_insert(0) += 1;
+                if let Some(&i) = index.get(&(e as *const Value as usize)) {
+                    *entry_votes.entry(i).or_insert_with(BTreeMap::new).entry(t2).or_insert(0) += 1;
+                }
             }
         }
     }
+    let most = |v: &BTreeMap<i64, usize>| v.iter().max_by_key(|&(t2, n)| (*n, std::cmp::Reverse(*t2))).map(|x| *x.0);
     // a donor's own copy of a lying common move (the only one of its clip and next) whose list goes into an off alias
     // (Lei's: his own ground moves) is the common move, the system's list
     let mut lying = BTreeMap::new();
@@ -1009,15 +1016,14 @@ fn donor_moves_off(
             lying.insert(m as u64, c);
         }
     }
-    for e in cancels.iter_mut().filter(|e| command(e) && off.contains(&int(&e["dest"]))) {
-        if let Some(&t2) = stance.get(&int(&e["cmd"])) {
+    for (i, e) in cancels.iter_mut().enumerate().filter(|(_, e)| command(e) && off.contains(&int(&e["dest"]))) {
+        if let Some(t2) = entry_votes.get(&i).and_then(most).or_else(|| stance.get(&int(&e["cmd"])).copied()) {
             e["dest"] = json!(t2);
         }
     }
     for a in off {
-        let won = votes.get(&a).and_then(|v| v.iter().max_by_key(|&(t2, n)| (*n, std::cmp::Reverse(*t2))));
-        out["aliases"][a as usize] = match won {
-            Some((&t2, _)) => out["aliases"][t2 as usize].clone(),
+        out["aliases"][a as usize] = match votes.get(&a).and_then(most) {
+            Some(t2) => out["aliases"][t2 as usize].clone(),
             None => json!({"bank": "off", "move": null}),
         };
     }
