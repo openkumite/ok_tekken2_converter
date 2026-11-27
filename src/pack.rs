@@ -37,8 +37,9 @@ pub const FORMAT: i64 = 1;
 /// held, the walks and dashes track (0x18); Lei's stage's floor CLUT animations (texture channels). 6: the heavy
 /// hits' character spark and light, the donor's (effects.json). 7: a knockdown takes the donor reaction whose victim goes
 /// as high (a fall is no launch). 8: the donor's own moves are off (aliases "off": its attacks, taunts, stances,
-/// chain throws), its stance's commands go to Tekken 2's.
-pub const INSTALL: i64 = 8;
+/// chain throws), its stance's commands go to Tekken 2's. 9: Angel's and Alex's moves pass Devil's and Roger's
+/// character gates (the fighter's select slot).
+pub const INSTALL: i64 = 9;
 /// What a pack's manifest names it.
 pub const KIND: &str = "t2";
 /// The disc's files a pack keeps (the pack's name, the disc's).

@@ -227,7 +227,11 @@ Tekken 2's select face (record 19).
   then in Tekken 2's order Jack-2, Michelle, Wang, Lee, P.Jack, Armor King, Ganryu, Kunimitsu, Devil, Bruce, Baek
   and Roger (25..36). Marshall Law, King and Kuma keep their Tekken 3 namesakes.
   - Angel and Alex are Devil's and Roger's second costumes, as in Tekken 2 (blocks 35 / 45, the pairs' second slots).
-    Each keeps its own model, moves, voices (its Tekken 2 id), select name, portrait and ending.
+    Each keeps its own model, moves, voices (its Tekken 2 id), select name, portrait and ending. The moves are the
+    pair's one set (block +7, the same bytes), and its character gates (entry req: 1..0x18 this fighter, 0x19..0x30
+    not) test the fighter's +0x18, which the select (0x800949B8: +0x16 block = slot * 2 + costume) sets to the slot:
+    Devil's for Angel, Roger's for Alex, Kazuya's for the third Kazuya (slot 23, block 46). Their move lists are the
+    same as Devil's and Roger's.
   - Endings: record 20's table 0x801D00E4 gives the ending movie by block. Its frames and audio come from
     `assets_t2/media/video` as OpenKumite's `video/1NN`, with a theater.json movie entry and
     `ending.extra[character][costume]`.

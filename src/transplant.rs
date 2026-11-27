@@ -1685,7 +1685,9 @@ fn transplant_fighter(
         transplant_sound(disc, assets, block, record, voice_row(cid, costume), t2id, tmp)?;
     let bgm = transplant_music(disc, src, media, assets, f.blocks[0], name)?;
     let ending = transplant_ending(disc, assets, media.then_some(videos), block, cid, costume, own_name)?;
-    let t2set = tm::T2Set::new(disc, block, t2id)?;
+    // the moves' character gates test the fighter's +0x18, its select slot (0x800949B8: Angel Devil's, Alex Roger's,
+    // the third Kazuya Kazuya's), not the costume's own Tekken 2 id
+    let t2set = tm::T2Set::new(disc, block, f.t2ids[0])?;
     let (stance, moves) = tm::graph(&t2set)?;
     let trig = t2::Trig::new(disc)?;
     let common = &disc.exe[off(tm::COMMON_MOTIONS).min(disc.exe.len())..];
@@ -1967,11 +1969,11 @@ pub fn run_from(
             }
         }
         for f in &fighters {
-            for &b in &f.blocks {
+            for (&b, name) in f.blocks.iter().zip(&f.costume_names) {
                 if only.is_none_or(|o| o.contains(&b)) {
                     let n = transplant_fighter(disc, src, media, assets, videos, f, b, TMP)
-                        .with_context(|| format!("{} (block {b})", f.name))?;
-                    ctx.log(&format!("model_{:03}.glb {} (block {b}): {n} moves from Tekken 2", 900 + b, f.name));
+                        .with_context(|| format!("{name} (block {b})"))?;
+                    ctx.log(&format!("model_{:03}.glb {name} (block {b}): {n} moves from Tekken 2", 900 + b));
                 }
             }
         }
