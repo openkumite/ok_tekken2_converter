@@ -1,6 +1,6 @@
 //! `t2_convert BIN [OUTDIR] [characters,stages,media]` (convert_all: the viewer's files), `t2_convert pack BIN PACK
-//! [--skip endings,music]` and `t2_convert install PACK T3_PACK EXTRAS` (what OpenKumite runs: pack.rs), or `t2_convert SCRIPT ARGS...` for
-//! one of the scripts: export_characters, export_stages, export_media, transplant.
+//! [--skip endings,music]` and `t2_convert install PACK T3_PACK EXTRAS` (what OpenKumite runs: pack.rs), or
+//! `t2_convert SCRIPT ARGS...` for one of the scripts: export_characters, export_stages, export_media, transplant.
 
 use ok_converter_common::io::{Ctx, Layered, StdFs, Sub, print_line};
 use ok_tekken2_converter::*;
