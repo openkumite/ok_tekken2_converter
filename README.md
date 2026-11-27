@@ -15,8 +15,10 @@ Tekken 2 disc image beside the Tekken 3 one. This repository is the library and 
 
 ## The library
 
-- `pack::convert(ctx, track1, cdda)`: the disc alone into a pack (any `Vfs`): the disc's tables and archive the
-  install reads, and the fighters' music and endings as files the game reads as they are (`assets/`).
+- `pack::convert(ctx, track1, cdda, skip)`: the disc alone into a pack (any `Vfs`): the disc's tables and archive the
+  install reads, and the fighters' music and endings as files the game reads as they are (`assets/`). `skip` (the
+  tool's `--skip`) leaves out what the game plays without (`pack::OPTIONAL`): `endings` (267 MB), `music` (668 MB);
+  the manifest's `skipped` names them, and the install names them all the same, as an ISO's.
 - `pack::install(ctx, pack)`: the fighters into the game's view: `ctx.out` is the extras (where everything goes)
   over the pack's `assets/` over the Tekken 3 pack (ok_converter_common's `Layered`). Each fighter plays a Tekken 3
   donor's system, its motions copied onto the fighter by joint name, so the install needs the Tekken 3 pack.

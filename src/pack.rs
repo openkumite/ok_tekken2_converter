@@ -5,7 +5,7 @@
 //! A pack (any `Vfs`: a folder, or the browser's pack file):
 //!
 //! ```text
-//! manifest.json        {"pack": "t2", "format": FORMAT, "source": {"file", "sha1_16mb", "missing"?}}
+//! manifest.json        {"pack": "t2", "format": FORMAT, "source": {"file", "sha1_16mb", "missing"?}, "skipped"?}
 //! disc/SLUS_002.13     the disc's EXE: its tables (moves, motions, BGMs, sounds); the install reads them
 //! disc/TEKKEN2.BNS     the disc's archive: models, motions, pictures, arenas, sounds
 //! assets/              files the game reads as they are (a layer of its view, under the extras): the fighters'
@@ -23,7 +23,7 @@ use crate::ps1::Iso;
 use crate::pyjson;
 use crate::transplant;
 use anyhow::{Context, Result, bail};
-use ok_converter_common::io::{Ctx, DiscFile, Sub, Vfs};
+use ok_converter_common::io::{Ctx, DiscFile, Sub, Vfs, Without};
 use serde_json::{Value, json};
 use sha1::Digest;
 use std::io::Read;
@@ -47,10 +47,21 @@ pub const ASSETS: &str = "assets";
 /// Where the movies are exported on the way (removed at the end).
 const MEDIA: &str = ".tmp/media";
 
-/// Converts the Tekken 2 disc (track 1 `src`, its CD-audio tracks `cdda`) into a pack in `ctx.out`, emptied first;
-/// writes the manifest last and returns it.
-pub fn convert(ctx: &Ctx, src: &dyn DiscFile, cdda: &[Option<Box<dyn DiscFile>>; 2]) -> Result<Value> {
-    let out = ctx.out;
+/// What a conversion can leave out (`skip`; the manifest's "skipped") and about how many bytes each is: the game plays
+/// without them (no ending movie: the staff roll; no music: silence).
+pub const OPTIONAL: [(&str, u64); 2] = [("endings", 267_000_000), ("music", 668_000_000)];
+
+/// The part of [`OPTIONAL`] a file of the pack is in; None: one the install or the game needs.
+pub fn optional(path: &str) -> Option<&'static str> {
+    let p = path.strip_prefix(ASSETS)?.strip_prefix('/')?;
+    if p.starts_with("video/") { Some("endings") } else { p.starts_with("audio/music/").then_some("music") }
+}
+
+/// Converts the Tekken 2 disc (track 1 `src`, its CD-audio tracks `cdda`) into a pack in `ctx.out`, emptied first,
+/// the parts of [`OPTIONAL`] in `skip` left out; writes the manifest last and returns it.
+pub fn convert(ctx: &Ctx, src: &dyn DiscFile, cdda: &[Option<Box<dyn DiscFile>>; 2], skip: &[&str]) -> Result<Value> {
+    let left_out = |p: &str| optional(p).is_some_and(|o| skip.contains(&o));
+    let out = &Without { inner: ctx.out, left_out: &left_out };
     out.remove_all("")?;
     let mut iso = Iso::open(src)?;
     ctx.log("[t2] the disc's tables and archive");
@@ -78,7 +89,7 @@ pub fn convert(ctx: &Ctx, src: &dyn DiscFile, cdda: &[Option<Box<dyn DiscFile>>;
         em::export_stream(&mut iso, xas_lba, stream, &assets, &path)?;
     }
     ctx.log("[t2] endings");
-    if media {
+    if media && !skip.contains(&"endings") {
         em::run(ctx, src, cdda, MEDIA, &["video"])?;
     }
     let videos = Sub { inner: out, prefix: format!("{MEDIA}/video") };
@@ -88,7 +99,10 @@ pub fn convert(ctx: &Ctx, src: &dyn DiscFile, cdda: &[Option<Box<dyn DiscFile>>;
         }
     }
     out.remove_all(".tmp")?;
-    let manifest = json!({"pack": KIND, "format": FORMAT, "source": source(src)?});
+    let mut manifest = json!({"pack": KIND, "format": FORMAT, "source": source(src)?});
+    if !skip.is_empty() {
+        manifest["skipped"] = json!(skip);
+    }
     out.write("manifest.json", pyjson::indent1(&manifest).as_bytes())?;
     out.checkpoint(&[])?;
     Ok(manifest)
@@ -111,7 +125,9 @@ pub fn manifest(pack: &dyn Vfs) -> Result<Value> {
 /// caller's.
 pub fn install(ctx: &Ctx, pack: &dyn Vfs) -> Result<()> {
     let m = manifest(pack)?;
-    let media = !m["source"]["missing"].as_array().is_some_and(|v| v.iter().any(|x| x == "movies"));
+    // (a pack without its movies or music, an ISO's or one that left them out: named all the same)
+    let media = !m["source"]["missing"].as_array().is_some_and(|v| v.iter().any(|x| x == "movies"))
+        && m["skipped"].as_array().is_none_or(Vec::is_empty);
     let read = |to: &str| pack.read(to).with_context(|| format!("the Tekken 2 pack has no {to}"));
     let disc = Disc::from_files(read(DISC_FILES[0].0)?, read(DISC_FILES[1].0)?)?;
     // (the endings are in the view already: none are copied)
@@ -130,4 +146,19 @@ pub fn source(disc: &dyn DiscFile) -> Result<Value> {
         v["missing"] = json!(["movies", "XA music"]);
     }
     Ok(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The optional parts: the endings' movies and the music of `assets/`; not the disc's files the install reads.
+    #[test]
+    fn the_optional_parts() {
+        let of = ["assets/video/103.avi", "assets/video/103.flac", "assets/audio/music/t2_00.flac"].map(optional);
+        assert_eq!(of, [Some("endings"), Some("endings"), Some("music")]);
+        for p in ["disc/TEKKEN2.BNS", "manifest.json", "video/103.avi", "assets"] {
+            assert_eq!(optional(p), None, "{p}");
+        }
+    }
 }
