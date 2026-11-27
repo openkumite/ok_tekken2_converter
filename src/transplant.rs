@@ -1707,7 +1707,8 @@ fn transplant_fighter(
     // and the guard: the block reactions (reactions.json slots 10 / 11 through the donor's aliases; the common
     // moves' clips) fold the wings (mode 3: hit, +0x5C, while blocking, +0x5F)
     let dset = load_json(assets, &join("gamedata/movesets", donor_set))?;
-    let common_moves = load_json(assets, "gamedata/movesets/common.json")?["moves"].take();
+    let mut common = load_json(assets, "gamedata/movesets/common.json")?;
+    let (common_moves, common_cancels) = (common["moves"].take(), common["cancels"].take());
     let reactions_t3 = load_json(assets, "gamedata/reactions.json")?["entries"].take();
     let mut guard = BTreeSet::new();
     for e in arr(&reactions_t3) {
@@ -1762,6 +1763,7 @@ fn transplant_fighter(
         reactions_t3: arr(&reactions_t3).to_vec(),
         common_t3: arr(&common_moves).to_vec(),
         shared_cancels: arr(&shared["shared_cancels"]["entries"]).to_vec(),
+        common_cancels: arr(&common_cancels).to_vec(),
         voice_index: voice_index.clone(),
         system_start,
         script: Some(&mut script),

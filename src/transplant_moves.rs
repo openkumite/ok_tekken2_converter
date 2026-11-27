@@ -25,7 +25,7 @@ use crate::export_characters::{BLOCK0, Decoder, Disc, off};
 use crate::transplant::{T2_TO_T3, t3_parent};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const COMMON: u32 = 0x80042864;
 pub const COMMON_MOTIONS: u32 = 0x800D660C;
@@ -421,6 +421,8 @@ pub struct Ctx<'a> {
     pub reactions_t3: Vec<Value>,
     pub common_t3: Vec<Value>,
     pub shared_cancels: Vec<Value>,
+    /// common.json's cancels
+    pub common_cancels: Vec<Value>,
     /// Tekken 2 voice sound index -> its place in the fighter's category-0 voice row
     pub voice_index: BTreeMap<u16, i64>,
     /// sound.json sfx_table.t2_system.start: Tekken 2 bank-2 sound n is the entry start + n
@@ -852,11 +854,127 @@ pub fn build(
             mv.shift_remove(k);
         }
     }
+    donor_moves_off(ctx, donor, &mut out, &mut cancels, neutral_move, throw_victims)?;
     for (i, c) in cancels.iter_mut().enumerate() {
         obj(c)?.insert("index".into(), json!(i));
     }
     out["cancels"] = json!(cancels);
     Ok((out, moves))
+}
+
+/// No move of the donor's own stays (#302): an alias a button enters (the set's lists, common.json's, the shared
+/// ones) for a donor move playing one of its own motions (attacks, taunts, stances, chain throws) or one going on into
+/// those without a button is off, and so is a throw's link into one of the donor's own throws: the engine takes no
+/// command into it and borrows nothing. The set's own entries into one go to the Tekken 2 stance's move of the same
+/// command instead, where it has one; an alias all whose entries (the common and shared lists' too) are such a command
+/// becomes that move (standing up out of a crouch, f+1 is Tekken 2's f+1). The common clips' moves, movement (a run's
+/// tackle), guard, reactions, getting up and the throw victims stay.
+fn donor_moves_off(
+    ctx: &Ctx,
+    donor: &Value,
+    out: &mut Value,
+    cancels: &mut [Value],
+    neutral_move: usize,
+    throw_victims: &[Value],
+) -> Result<()> {
+    let n_donor = arr(&donor["moves"]).len();
+    let victims: BTreeSet<i64> = ctx
+        .reactions_t3
+        .iter()
+        .flat_map(|e| arr(&e["victims"]).iter().map(int))
+        .chain(throw_victims.iter().map(int))
+        // (and where the common moves go on by themselves: getting up's kicks)
+        .chain(ctx.common_t3.iter().map(|m| int(&m["next"]["alias"])))
+        .chain(ctx.common_cancels.iter().filter(|e| e["kind"] == "end").map(|e| int(&e["dest"])))
+        .collect();
+    let command = |e: &Value| e["kind"] == "command" || e["kind"] == "sequence";
+    let button = |e: &Value| e["kind"] == "sequence" || int(&e["cmd"]) & 0xC000 == 0 && int(&e["cmd"]) & 0xF != 0;
+    let donor_move = |a: i64| -> Option<usize> {
+        let r = usize::try_from(a).ok().and_then(|a| out["aliases"].get(a)).filter(|r| r["bank"] == "own")?;
+        let m = r["move"].as_u64()? as usize;
+        (m < n_donor && m != neutral_move && !victims.contains(&a)).then_some(m)
+    };
+    // the donor's own moves: its own motions (its attacks, taunts, stances, throws; the common clips' moves, a crouch's
+    // jab, the jumps' and getting up's kicks, are every Tekken 3 fighter's and stay), and what goes on into one without
+    // a button (its next, END, a string's next part)
+    let moves = arr(&out["moves"]);
+    let mut own: BTreeSet<usize> =
+        (0..n_donor).filter(|&m| moves[m]["anim"].as_str().is_some_and(|s| s.starts_with("motion_"))).collect();
+    loop {
+        let n = own.len();
+        for m in (0..n_donor).filter(|m| !own.contains(m)).collect::<Vec<_>>() {
+            let into = |a: i64| donor_move(a).is_some_and(|d| own.contains(&d));
+            let mut leads = into(int(&moves[m]["next"]["alias"]));
+            if let Some(start) = moves[m]["cancel_start"].as_u64() {
+                let mut list: Vec<&Value> = Vec::new();
+                for e in cancels.iter().skip(start as usize) {
+                    if e["kind"] == "call" {
+                        let sub = ctx.shared_cancels.iter().skip(int(&e["dest"]) as usize);
+                        list.extend(sub.take_while(|s| s["kind"] != "return" && s["kind"] != "end"));
+                        continue;
+                    }
+                    list.push(e);
+                    if e["kind"] == "end" {
+                        break;
+                    }
+                }
+                leads |= list.iter().any(|e| (e["kind"] == "end" || command(e) && !button(e)) && into(int(&e["dest"])));
+            }
+            if leads {
+                own.insert(m);
+            }
+        }
+        if own.len() == n {
+            break;
+        }
+    }
+    // (a throw's link, 0x21, into the donor's own throw: the sides and the back Tekken 2 has no throw for)
+    let link = |e: &Value, m: usize| {
+        int(&e["transition"]) & 0x7F == 0x21 && moves[m]["anim"].as_str().is_some_and(|s| s.starts_with("motion_"))
+    };
+    let mut off = BTreeSet::new();
+    for e in cancels.iter().chain(&ctx.common_cancels).chain(&ctx.shared_cancels).filter(|e| command(e)) {
+        let a = int(&e["dest"]);
+        if donor_move(a).is_some_and(|m| own.contains(&m) && (button(e) || link(e, m))) {
+            off.insert(a);
+        }
+    }
+    // the Tekken 2 stance's own commands (its moves and the throws made for it): cmd -> alias
+    let start = int(&out["moves"][neutral_move]["cancel_start"]) as usize;
+    let mut stance = BTreeMap::new();
+    for e in cancels
+        .iter()
+        .skip(start)
+        .take_while(|e| e["kind"] != "end")
+        .filter(|e| e["kind"] == "command" && int(&e["req"]) == 0 && int(&e["cond"]) == 0)
+        .filter(|e| out["aliases"][int(&e["dest"]) as usize]["move"].as_u64().is_some_and(|m| m as usize >= n_donor))
+    {
+        stance.entry(int(&e["cmd"])).or_insert(int(&e["dest"]));
+    }
+    // (an alias every entry of which, the common and shared lists' too, is a command the stance has: that move, so
+    // f+1 standing up is Tekken 2's)
+    let mut same: BTreeMap<i64, Option<i64>> = BTreeMap::new();
+    for e in cancels.iter().chain(&ctx.common_cancels).chain(&ctx.shared_cancels).filter(|e| command(e)) {
+        let a = int(&e["dest"]);
+        if off.contains(&a) {
+            let t2 = (e["kind"] == "command" && int(&e["transition"]) & 0x7F != 0x21)
+                .then(|| stance.get(&int(&e["cmd"])).copied())
+                .flatten();
+            same.entry(a).and_modify(|s| *s = s.filter(|&s| Some(s) == t2)).or_insert(t2);
+        }
+    }
+    for e in cancels.iter_mut().filter(|e| command(e) && off.contains(&int(&e["dest"]))) {
+        if let Some(&t2) = stance.get(&int(&e["cmd"])) {
+            e["dest"] = json!(t2);
+        }
+    }
+    for a in off {
+        out["aliases"][a as usize] = match same.get(&a).copied().flatten() {
+            Some(t2) => out["aliases"][t2 as usize].clone(),
+            None => json!({"bank": "off", "move": null}),
+        };
+    }
+    Ok(())
 }
 
 /// A Tekken 2 move's voices (its sound list, 0x80073174) as port sound entries: type 4 / 5 a voice on frame 1 (type
