@@ -1811,6 +1811,13 @@ fn transplant_fighter(
     models.retain(|m| int(&m["model_record"]) != record as i64);
     models.push(json!({"model_record": record, "glb": format!("model_{record:03}.glb"), "size_percent": 100, "moveset_file": format!("movesets/{set_file}")}));
     write_json(assets, rp, &roster, pyjson::INDENT1)?;
+    // its heavy hits (21 or more, 0x80076C28) show the donor's character spark and light, as Tekken 3's fighters do
+    let ep = "pictures/effects/effects.json";
+    let mut effects = load_json(assets, ep)?;
+    if let Some(spark) = effects["characters"].get(donor_model.to_string()).cloned() {
+        obj(&mut effects["characters"])?.insert(record.to_string(), spark);
+        write_json(assets, ep, &effects, pyjson::INDENT1)?;
+    }
     Ok(moves.len())
 }
 

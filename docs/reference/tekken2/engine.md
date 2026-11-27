@@ -208,6 +208,8 @@ Tekken 2's select face (record 19).
     dashes (where a kept f,f leads) take the donor dash's entries into the run (Tekken 2's own run, dash entry cond
     0x08, is left out), so a run goes into the Ultimate Tackle; a backdash leaves out the donor's walk back (held back
     goes on with it, as in Tekken 3).
+  - Heavy hits (21 or more): the donor's character spark and light (effects.json `characters`, under the fighter's
+    model record), as Tekken 3's fighters show them; Tekken 2's own spark frames (block +4) are not played yet.
   - Conditions (handlers 0x8004E230; a1 the fighter, a2 the opponent): 0x19 back turned (+0x28 > 0x4000) →
     Tekken 3's 0x24; 0x1E opponent attacking close; 0x27 / 0x2A opponent flag 0x40; 0x2C grabbed (+0x8B);
     0x2D / 0x2E +0xBA == 0 / != 0; 0x33 +0x1DC == 0; 0x35 +0xBC == 0. Taken: 0x19 and 0x2D.
