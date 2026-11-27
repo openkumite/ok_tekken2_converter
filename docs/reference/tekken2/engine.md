@@ -249,7 +249,8 @@ Tekken 2's select face (record 19).
     and buttons that reach it first in a list still played (the set's, common.json's, the shared ones) votes for the
     move Tekken 2's stance plays for them, or from a crouch its full crouch (where the stance's d goes at its END):
     standing up out of a crouch f+1 is Tekken 2's f+1. The set's own entries into one go where their own votes do
-    (else to the stance's move of the same command): a full crouch's d+2 is its d/b|d+2. A donor's own copy of a lying
+    (else to the stance's move of the same command; a crouching move gets its shared lists inlined for that): a full
+    crouch's d+2 is its d/b|d+2, not the stance's d+2. A donor's own copy of a lying
     common move that goes into one (Lei's ground moves) is the common move. The common clips' moves (a crouch's jab,
     the jumps' and getting up's kicks: every Tekken 3 fighter's), movement, guard, reactions and the throw victims stay.
   - Home arena: the character table's +6 stage. Kazuya's and Jun's are 30 / 31, the others' 60 + the Tekken 2 stage.

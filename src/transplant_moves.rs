@@ -882,8 +882,8 @@ pub fn build(
 /// buttons reaching it first in a list still played (the set's, the common and shared ones) votes for what Tekken 2's
 /// stance (`t2_lists[0]`) or, from a crouch, its full crouch (`[1]`) plays for them; so standing up out of a crouch
 /// f+1 is Tekken 2's f+1. The set's own entries into one go where their own votes do (else to the stance's move of the
-/// same command): a full crouch's d+2 is its d/b|d+2. The common clips' moves, movement (a run's tackle), guard,
-/// reactions, getting up and the throw victims stay.
+/// same command; a crouching move gets its shared lists inlined for that): a full crouch's d+2 is its d/b|d+2. The
+/// common clips' moves, movement (a run's tackle), guard, reactions, getting up and the throw victims stay.
 fn donor_moves_off(
     ctx: &Ctx,
     donor: &Value,
